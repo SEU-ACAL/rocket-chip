@@ -18,10 +18,10 @@ case class FPUParams(
   minFLen: Int = 32,
   fLen: Int = 64,
   divSqrt: Boolean = true,
-  sfmaLatency: Int = 3,
-  dfmaLatency: Int = 4,
+  sfmaLatency: Int = 5,
+  dfmaLatency: Int = 6,
   fpmuLatency: Int = 2,
-  ifpuLatency: Int = 2
+  ifpuLatency: Int = 4
 )
 
 object FPConstants
@@ -525,18 +525,127 @@ class FPToInt(implicit p: Parameters) extends FPUModule()(p) {
   io.out.bits.in := in
 }
 
+class PipelinedINToRecFN(intWidth: Int, expWidth: Int, sigWidth: Int) extends Module {
+  val io = IO(new Bundle {
+    val validin = Input(Bool())
+    val signedIn = Input(Bool())
+    val in = Input(Bits(intWidth.W))
+    val bypassIn = Input(Bits(intWidth.W))
+    val roundingMode = Input(UInt(3.W))
+    val detectTininess = Input(UInt(1.W))
+    val typeTagIn = Input(UInt(2.W))
+    val wflagsIn = Input(Bool())
+    val out = Output(Bits((expWidth + sigWidth + 1).W))
+    val exceptionFlags = Output(Bits(5.W))
+    val typeTagOut = Output(UInt(2.W))
+    val wflagsOut = Output(Bool())
+    val inOut = Output(Bits(intWidth.W))
+    val validout = Output(Bool())
+  })
+
+  val rawExpWidth = log2Up(intWidth) + 1
+  val extIntWidth = 1 << (rawExpWidth - 1)
+  val normalizationLevels = rawExpWidth - 1
+  val firstStageLevels = 2
+  val secondStageLevels = normalizationLevels - firstStageLevels
+  require(secondStageLevels > 0)
+
+  val sign = io.signedIn && io.in(intWidth - 1)
+  val absIn = Mux(sign, -io.in.asUInt, io.in.asUInt)
+  val extAbsIn = (0.U(extIntWidth.W) ## absIn)(extIntWidth - 1, 0)
+
+  // Complete the 32- and 16-bit normalization decisions before the cut.
+  val firstNormStages = Wire(Vec(firstStageLevels + 1, UInt(extIntWidth.W)))
+  val firstNormDist = Wire(Vec(firstStageLevels, Bool()))
+  firstNormStages(0) := extAbsIn
+  for (level <- 0 until firstStageLevels) {
+    val shiftAmt = extIntWidth >> (level + 1)
+    val upperHalfIsZero =
+      !firstNormStages(level)(extIntWidth - 1, extIntWidth - shiftAmt).orR
+    firstNormStages(level + 1) := Mux(
+      upperHalfIsZero,
+      (firstNormStages(level) << shiftAmt)(extIntWidth - 1, 0),
+      firstNormStages(level)
+    )
+    firstNormDist(firstStageLevels - 1 - level) := upperHalfIsZero
+  }
+
+  val midNormStage = RegEnable(firstNormStages(firstStageLevels), io.validin)
+  val midNormDist = RegEnable(firstNormDist.asUInt, io.validin)
+  val midSign = RegEnable(sign, io.validin)
+  val midRoundingMode = RegEnable(io.roundingMode, io.validin)
+  val midDetectTininess = RegEnable(io.detectTininess, io.validin)
+  val midTypeTag = RegEnable(io.typeTagIn, io.validin)
+  val midWflags = RegEnable(io.wflagsIn, io.validin)
+  val midIn = RegEnable(io.bypassIn, io.validin)
+  val midValid = RegNext(io.validin, false.B)
+
+  val secondNormStages = Wire(Vec(secondStageLevels + 1, UInt(extIntWidth.W)))
+  val secondNormDist = Wire(Vec(secondStageLevels, Bool()))
+  secondNormStages(0) := midNormStage
+  for (offset <- 0 until secondStageLevels) {
+    val level = firstStageLevels + offset
+    val shiftAmt = extIntWidth >> (level + 1)
+    val upperHalfIsZero =
+      !secondNormStages(offset)(extIntWidth - 1, extIntWidth - shiftAmt).orR
+    secondNormStages(offset + 1) := Mux(
+      upperHalfIsZero,
+      (secondNormStages(offset) << shiftAmt)(extIntWidth - 1, 0),
+      secondNormStages(offset)
+    )
+    secondNormDist(secondStageLevels - 1 - offset) := upperHalfIsZero
+  }
+
+  val adjustedNormDist = Cat(midNormDist, secondNormDist.asUInt)
+  val sig = secondNormStages(secondStageLevels)(extIntWidth - 1, extIntWidth - intWidth)
+  val intAsRawFloat = Wire(new hardfloat.RawFloat(rawExpWidth, intWidth))
+  intAsRawFloat.isNaN := false.B
+  intAsRawFloat.isInf := false.B
+  intAsRawFloat.isZero := !sig(intWidth - 1)
+  intAsRawFloat.sign := midSign
+  intAsRawFloat.sExp := (2.U(2.W) ## ~adjustedNormDist).zext
+  intAsRawFloat.sig := sig
+
+  // Isolate the remaining normalization and raw-float construction from the
+  // target-format rounding and packing logic.
+  val roundInput = RegEnable(intAsRawFloat, midValid)
+  val roundRoundingMode = RegEnable(midRoundingMode, midValid)
+  val roundDetectTininess = RegEnable(midDetectTininess, midValid)
+  val roundTypeTag = RegEnable(midTypeTag, midValid)
+  val roundWflags = RegEnable(midWflags, midValid)
+  val roundIn = RegEnable(midIn, midValid)
+  val roundValid = RegNext(midValid, false.B)
+
+  val roundAnyRawFNToRecFN = Module(new hardfloat.RoundAnyRawFNToRecFN(
+    rawExpWidth,
+    intWidth,
+    expWidth,
+    sigWidth,
+    hardfloat.consts.flRoundOpt_sigMSBitAlwaysZero | hardfloat.consts.flRoundOpt_neverUnderflows
+  ))
+  roundAnyRawFNToRecFN.io.invalidExc := false.B
+  roundAnyRawFNToRecFN.io.infiniteExc := false.B
+  roundAnyRawFNToRecFN.io.in := roundInput
+  roundAnyRawFNToRecFN.io.roundingMode := roundRoundingMode
+  roundAnyRawFNToRecFN.io.detectTininess := roundDetectTininess
+
+  io.out := roundAnyRawFNToRecFN.io.out
+  io.exceptionFlags := roundAnyRawFNToRecFN.io.exceptionFlags
+  io.typeTagOut := roundTypeTag
+  io.wflagsOut := roundWflags
+  io.inOut := roundIn
+  io.validout := roundValid
+}
+
 class IntToFP(val latency: Int)(implicit p: Parameters) extends FPUModule()(p) {
   val io = IO(new Bundle {
     val in = Flipped(Valid(new IntToFPInput))
     val out = Valid(new FPResult)
   })
 
-  val in = Pipe(io.in)
-  val tag = in.bits.typeTagIn
+  require(latency >= 3)
 
-  val mux = Wire(new FPResult)
-  mux.exc := 0.U
-  mux.data := recode(in.bits.in1, tag)
+  val in = Pipe(io.in)
 
   val intValue = {
     val res = WireDefault(in.bits.in1.asSInt)
@@ -549,16 +658,29 @@ class IntToFP(val latency: Int)(implicit p: Parameters) extends FPUModule()(p) {
     res.asUInt
   }
 
-  when (in.bits.wflags) { // fcvt
+  val i2f = for (t <- floatTypes) yield {
+    val converter = Module(new PipelinedINToRecFN(xLen, t.exp, t.sig))
+    converter.io.validin := in.valid
+    converter.io.signedIn := ~in.bits.typ(0)
+    converter.io.in := intValue
+    converter.io.bypassIn := in.bits.in1
+    converter.io.roundingMode := in.bits.rm
+    converter.io.detectTininess := hardfloat.consts.tininess_afterRounding
+    converter.io.typeTagIn := in.bits.typeTagIn
+    converter.io.wflagsIn := in.bits.wflags
+    converter
+  }
+  val tag = i2f.head.io.typeTagOut
+
+  val mux = Wire(new FPResult)
+  mux.exc := 0.U
+  mux.data := recode(i2f.head.io.inOut, tag)
+
+  when (i2f.head.io.wflagsOut) { // fcvt
     // could be improved for RVD/RVQ with a single variable-position rounding
     // unit, rather than N fixed-position ones
-    val i2fResults = for (t <- floatTypes) yield {
-      val i2f = Module(new hardfloat.INToRecFN(xLen, t.exp, t.sig))
-      i2f.io.signedIn := ~in.bits.typ(0)
-      i2f.io.in := intValue
-      i2f.io.roundingMode := in.bits.rm
-      i2f.io.detectTininess := hardfloat.consts.tininess_afterRounding
-      (sanitizeNaN(i2f.io.out, t), i2f.io.exceptionFlags)
+    val i2fResults = i2f.zip(floatTypes).map { case (converter, t) =>
+      (sanitizeNaN(converter.io.out, t), converter.io.exceptionFlags)
     }
 
     val (data, exc) = i2fResults.unzip
@@ -567,7 +689,7 @@ class IntToFP(val latency: Int)(implicit p: Parameters) extends FPUModule()(p) {
     mux.exc := exc(tag)
   }
 
-  io.out <> Pipe(in.valid, mux, latency-1)
+  io.out <> Pipe(i2f.head.io.validout, mux, latency-3)
 }
 
 class FPToFP(val latency: Int)(implicit p: Parameters) extends FPUModule()(p) {
@@ -633,7 +755,7 @@ class FPToFP(val latency: Int)(implicit p: Parameters) extends FPUModule()(p) {
 class MulAddRecFNPipe(latency: Int, expWidth: Int, sigWidth: Int) extends Module
 {
     override def desiredName = s"MulAddRecFNPipe_l${latency}_e${expWidth}_s${sigWidth}"
-    require(latency<=2)
+    require(latency<=4)
 
     val io = IO(new Bundle {
         val validin = Input(Bool())
@@ -659,29 +781,41 @@ class MulAddRecFNPipe(latency: Int, expWidth: Int, sigWidth: Int) extends Module
     mulAddRecFNToRaw_preMul.io.b  := io.b
     mulAddRecFNToRaw_preMul.io.c  := io.c
 
-    val mulAddResult =
-        (mulAddRecFNToRaw_preMul.io.mulAddA *
-             mulAddRecFNToRaw_preMul.io.mulAddB) +&
-            mulAddRecFNToRaw_preMul.io.mulAddC
+    // Isolate preMul's unpack/alignment logic from the multiplier-add stage.
+    val preMulRegs = if (latency >= 3) 1 else 0
+    val preMulMulAddA = Pipe(io.validin, mulAddRecFNToRaw_preMul.io.mulAddA, preMulRegs)
+    val preMulMulAddB = Pipe(io.validin, mulAddRecFNToRaw_preMul.io.mulAddB, preMulRegs)
+    val preMulMulAddC = Pipe(io.validin, mulAddRecFNToRaw_preMul.io.mulAddC, preMulRegs)
+    val preMulToPostMul = Pipe(io.validin, mulAddRecFNToRaw_preMul.io.toPostMul, preMulRegs)
+
+    // Keep the full-precision product unrounded while separating multiplication
+    // from the final addition.  The aligned addend and post-processing metadata
+    // must cross this stage with the product to preserve fused FMA semantics.
+    val mulRegs = if (latency == 4) 1 else 0
+    val mulResult = preMulMulAddA.bits * preMulMulAddB.bits
+    val mulResultPipe = Pipe(preMulToPostMul.valid, mulResult, mulRegs)
+    val mulAddCPipe = Pipe(preMulToPostMul.valid, preMulMulAddC.bits, mulRegs)
+    val mulToPostMul = Pipe(preMulToPostMul.valid, preMulToPostMul.bits, mulRegs)
+    val mulAddResult = mulResultPipe.bits +& mulAddCPipe.bits
 
     val valid_stage0 = Wire(Bool())
     val roundingMode_stage0 = Wire(UInt(3.W))
     val detectTininess_stage0 = Wire(UInt(1.W))
 
     val postmul_regs = if(latency>0) 1 else 0
-    mulAddRecFNToRaw_postMul.io.fromPreMul   := Pipe(io.validin, mulAddRecFNToRaw_preMul.io.toPostMul, postmul_regs).bits
-    mulAddRecFNToRaw_postMul.io.mulAddResult := Pipe(io.validin, mulAddResult, postmul_regs).bits
-    mulAddRecFNToRaw_postMul.io.roundingMode := Pipe(io.validin, io.roundingMode, postmul_regs).bits
-    roundingMode_stage0                      := Pipe(io.validin, io.roundingMode, postmul_regs).bits
-    detectTininess_stage0                    := Pipe(io.validin, io.detectTininess, postmul_regs).bits
-    valid_stage0                             := Pipe(io.validin, false.B, postmul_regs).valid
+    mulAddRecFNToRaw_postMul.io.fromPreMul   := Pipe(mulToPostMul.valid, mulToPostMul.bits, postmul_regs).bits
+    mulAddRecFNToRaw_postMul.io.mulAddResult := Pipe(mulToPostMul.valid, mulAddResult, postmul_regs).bits
+    mulAddRecFNToRaw_postMul.io.roundingMode := Pipe(io.validin, io.roundingMode, preMulRegs + mulRegs + postmul_regs).bits
+    roundingMode_stage0                      := Pipe(io.validin, io.roundingMode, preMulRegs + mulRegs + postmul_regs).bits
+    detectTininess_stage0                    := Pipe(io.validin, io.detectTininess, preMulRegs + mulRegs + postmul_regs).bits
+    valid_stage0                             := Pipe(io.validin, false.B, preMulRegs + mulRegs + postmul_regs).valid
 
     //------------------------------------------------------------------------
     //------------------------------------------------------------------------
 
     val roundRawFNToRecFN = Module(new hardfloat.RoundRawFNToRecFN(expWidth, sigWidth, 0))
 
-    val round_regs = if(latency==2) 1 else 0
+    val round_regs = if(latency>=2) 1 else 0
     roundRawFNToRecFN.io.invalidExc         := Pipe(valid_stage0, mulAddRecFNToRaw_postMul.io.invalidExc, round_regs).bits
     roundRawFNToRecFN.io.in                 := Pipe(valid_stage0, mulAddRecFNToRaw_postMul.io.rawOut, round_regs).bits
     roundRawFNToRecFN.io.roundingMode       := Pipe(valid_stage0, roundingMode_stage0, round_regs).bits
@@ -716,7 +850,8 @@ class FPUFMAPipe(val latency: Int, val t: FType)
     when (!(cmd_fma || cmd_addsub)) { in.in3 := zero }
   }
 
-  val fma = Module(new MulAddRecFNPipe((latency-1) min 2, t.exp, t.sig))
+  val fmaLatency = (latency - 1) min 4
+  val fma = Module(new MulAddRecFNPipe(fmaLatency, t.exp, t.sig))
   fma.io.validin := valid
   fma.io.op := in.fmaCmd
   fma.io.roundingMode := in.rm
@@ -729,7 +864,7 @@ class FPUFMAPipe(val latency: Int, val t: FType)
   res.data := sanitizeNaN(fma.io.out, t)
   res.exc := fma.io.exceptionFlags
 
-  io.out := Pipe(fma.io.validout, res, (latency-3) max 0)
+  io.out := Pipe(fma.io.validout, res, (latency - 1 - fmaLatency) max 0)
 }
 
 class FPU(cfg: FPUParams)(implicit p: Parameters) extends FPUModule()(p) {
@@ -922,6 +1057,7 @@ class FPU(cfg: FPUParams)(implicit p: Parameters) extends FPUModule()(p) {
           hfma.io.in.bits := fuInput(Some(hfma.t))
           Pipe(hfma, hfma.latency, (c: FPUCtrlSigs) => c.fma && c.typeTagOut === H, hfma.io.out.bits)
         })
+  
   def latencyMask(c: FPUCtrlSigs, offset: Int) = {
     require(pipes.forall(_.lat >= offset))
     pipes.map(p => Mux(p.cond(c), (1 << p.lat-offset).U, 0.U)).reduce(_|_)
