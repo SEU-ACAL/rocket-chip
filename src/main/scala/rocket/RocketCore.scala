@@ -163,7 +163,7 @@ class Rocket(tile: RocketTile)(implicit p: Parameters) extends CoreModule()(p)
 
   val clock_en_reg = RegInit(true.B)
   val long_latency_stall = Reg(Bool())
-  val id_reg_pause = Reg(Bool())
+  val id_reg_pause = RegInit(false.B)
   val imem_might_request_reg = Reg(Bool())
   val clock_en = WireDefault(true.B)
   val gated_clock =
@@ -324,7 +324,12 @@ class Rocket(tile: RocketTile)(implicit p: Parameters) extends CoreModule()(p)
   require(decodeWidth == 1 /* TODO */ && retireWidth == decodeWidth)
   require(!(coreParams.useRVE && coreParams.fpu.nonEmpty), "Can't select both RVE and floating-point")
   require(!(coreParams.useRVE && coreParams.useHypervisor), "Can't select both RVE and Hypervisor")
-  val id_ctrl = Wire(new IntCtrlSigs).decode(id_inst(0), decode_table)
+  val id_valid = ibuf.io.inst(0).valid
+  val id_ctrl_raw = Wire(new IntCtrlSigs).decode(id_inst(0), decode_table)
+  val id_ctrl = WireDefault(0.U.asTypeOf(new IntCtrlSigs))
+  when (id_valid) {
+    id_ctrl := id_ctrl_raw
+  }
 
   val lgNXRegs = if (coreParams.useRVE) 4 else 5
   val regAddrMask = (1 << lgNXRegs) - 1
@@ -352,35 +357,35 @@ class Rocket(tile: RocketTile)(implicit p: Parameters) extends CoreModule()(p)
   val id_csr_flush = id_system_insn || (id_csr_en && !id_csr_ren && csr.io.decode(0).write_flush)
   val id_set_vconfig = Seq(Instructions.VSETVLI, Instructions.VSETIVLI, Instructions.VSETVL).map(_ === id_inst(0)).orR && usingVector.B
 
-  id_ctrl.vec := false.B
+  id_ctrl_raw.vec := false.B
   if (usingVector) {
     val v_decode = rocketParams.vector.get.decoder(p)
     v_decode.io.inst := id_inst(0)
     v_decode.io.vconfig := csr.io.vector.get.vconfig
-    id_ctrl.vec := v_decode.io.vector
+    id_ctrl_raw.vec := v_decode.io.vector
     when (v_decode.io.legal) {
-      id_ctrl.legal := true.B
-      id_ctrl.fp := v_decode.io.fp
-      id_ctrl.rocc := false.B
-      id_ctrl.branch := false.B
-      id_ctrl.jal := false.B
-      id_ctrl.jalr := false.B
-      id_ctrl.rxs2 := v_decode.io.read_rs2
-      id_ctrl.rxs1 := v_decode.io.read_rs1
-      id_ctrl.mem := false.B
-      id_ctrl.rfs1 := v_decode.io.read_frs1
-      id_ctrl.rfs2 := false.B
-      id_ctrl.rfs3 := false.B
-      id_ctrl.wfd := v_decode.io.write_frd
-      id_ctrl.mul := false.B
-      id_ctrl.div := false.B
-      id_ctrl.wxd := v_decode.io.write_rd
-      id_ctrl.csr := CSR.N
-      id_ctrl.fence_i := false.B
-      id_ctrl.fence := false.B
-      id_ctrl.amo := false.B
-      id_ctrl.dp := false.B
-      id_ctrl.vec := true.B
+      id_ctrl_raw.legal := true.B
+      id_ctrl_raw.fp := v_decode.io.fp
+      id_ctrl_raw.rocc := false.B
+      id_ctrl_raw.branch := false.B
+      id_ctrl_raw.jal := false.B
+      id_ctrl_raw.jalr := false.B
+      id_ctrl_raw.rxs2 := v_decode.io.read_rs2
+      id_ctrl_raw.rxs1 := v_decode.io.read_rs1
+      id_ctrl_raw.mem := false.B
+      id_ctrl_raw.rfs1 := v_decode.io.read_frs1
+      id_ctrl_raw.rfs2 := false.B
+      id_ctrl_raw.rfs3 := false.B
+      id_ctrl_raw.wfd := v_decode.io.write_frd
+      id_ctrl_raw.mul := false.B
+      id_ctrl_raw.div := false.B
+      id_ctrl_raw.wxd := v_decode.io.write_rd
+      id_ctrl_raw.csr := CSR.N
+      id_ctrl_raw.fence_i := false.B
+      id_ctrl_raw.fence := false.B
+      id_ctrl_raw.amo := false.B
+      id_ctrl_raw.dp := false.B
+      id_ctrl_raw.vec := true.B
     }
   }
 
