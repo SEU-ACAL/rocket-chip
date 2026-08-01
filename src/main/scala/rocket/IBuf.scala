@@ -35,10 +35,14 @@ class IBuf(implicit p: Parameters) extends CoreModule {
   val buf = Reg(chiselTypeOf(io.imem.bits))
   val ibufBTBResp = Reg(new BTBResp)
   val pcWordMask = (coreInstBytes*fetchWidth-1).U(vaddrBitsExtended.W)
+  val imem_bits = WireDefault(0.U.asTypeOf(new FrontendResp))
+  when (io.imem.valid) {
+    imem_bits := io.imem.bits
+  }
 
-  val pcWordBits = io.imem.bits.pc.extract(log2Ceil(fetchWidth*coreInstBytes)-1, log2Ceil(coreInstBytes))
+  val pcWordBits = imem_bits.pc.extract(log2Ceil(fetchWidth*coreInstBytes)-1, log2Ceil(coreInstBytes))
   val nReady = WireDefault(0.U(log2Ceil(fetchWidth+1).W))
-  val nIC = Mux(io.imem.bits.btb.taken && io.imem.valid, io.imem.bits.btb.bridx +& 1.U, fetchWidth.U) - pcWordBits
+  val nIC = Mux(imem_bits.btb.taken, imem_bits.btb.bridx +& 1.U, fetchWidth.U) - pcWordBits
   val nICReady = nReady - nBufValid
   val nValid = Mux(io.imem.valid, nIC, 0.U) + nBufValid
   io.imem.ready := io.inst(0).ready && nReady >= nBufValid && (nICReady >= nIC || n.U >= nIC - nICReady)
@@ -54,10 +58,10 @@ class IBuf(implicit p: Parameters) extends CoreModule {
       when (io.imem.valid && nReady >= nBufValid && nICReady < nIC && n.U >= nIC - nICReady) {
         val shamt = pcWordBits + nICReady
         nBufValid := nIC - nICReady
-        buf := io.imem.bits
-        buf.data := shiftInsnRight(io.imem.bits.data, shamt)(n*coreInstBits-1,0)
-        buf.pc := io.imem.bits.pc & ~pcWordMask | (io.imem.bits.pc + (nICReady << log2Ceil(coreInstBytes))) & pcWordMask
-        ibufBTBResp := io.imem.bits.btb
+        buf := imem_bits
+        buf.data := shiftInsnRight(imem_bits.data, shamt)(n*coreInstBits-1,0)
+        buf.pc := imem_bits.pc & ~pcWordMask | (imem_bits.pc + (nICReady << log2Ceil(coreInstBytes))) & pcWordMask
+        ibufBTBResp := imem_bits.btb
       }
     }
     when (io.kill) {
@@ -66,20 +70,20 @@ class IBuf(implicit p: Parameters) extends CoreModule {
   }
 
   val icShiftAmt = (fetchWidth.U + nBufValid - pcWordBits)(log2Ceil(fetchWidth), 0)
-  val icData = shiftInsnLeft(Cat(io.imem.bits.data, Fill(fetchWidth, io.imem.bits.data(coreInstBits-1, 0))), icShiftAmt)
+  val icData = shiftInsnLeft(Cat(imem_bits.data, Fill(fetchWidth, imem_bits.data(coreInstBits-1, 0))), icShiftAmt)
     .extract(3*fetchWidth*coreInstBits-1, 2*fetchWidth*coreInstBits)
   val icMask = (~0.U((fetchWidth*coreInstBits).W) << (nBufValid << log2Ceil(coreInstBits)))(fetchWidth*coreInstBits-1,0)
   val inst = icData & icMask | buf.data & ~icMask
 
   val valid = (UIntToOH(nValid) - 1.U)(fetchWidth-1, 0)
   val bufMask = UIntToOH(nBufValid) - 1.U
-  val xcpt = (0 until bufMask.getWidth).map(i => Mux(bufMask(i), buf.xcpt, io.imem.bits.xcpt))
+  val xcpt = (0 until bufMask.getWidth).map(i => Mux(bufMask(i), buf.xcpt, imem_bits.xcpt))
   val buf_replay = Mux(buf.replay, bufMask, 0.U)
-  val ic_replay = buf_replay | Mux(io.imem.bits.replay, valid & ~bufMask, 0.U)
-  assert(!io.imem.valid || !io.imem.bits.btb.taken || io.imem.bits.btb.bridx >= pcWordBits)
+  val ic_replay = buf_replay | Mux(imem_bits.replay, valid & ~bufMask, 0.U)
+  assert(!io.imem.valid || !imem_bits.btb.taken || imem_bits.btb.bridx >= pcWordBits)
 
-  io.btb_resp := io.imem.bits.btb
-  io.pc := Mux(nBufValid > 0.U, buf.pc, io.imem.bits.pc)
+  io.btb_resp := imem_bits.btb
+  io.pc := Mux(nBufValid > 0.U, buf.pc, imem_bits.pc)
   expand(0, 0.U, inst)
 
   def expand(i: Int, j: UInt, curInst: UInt): Unit = if (i < retireWidth) {
@@ -99,11 +103,11 @@ class IBuf(implicit p: Parameters) extends CoreModule {
 
       when ((bufMask(j) && exp.io.rvc) || bufMask(j+1.U)) { io.btb_resp := ibufBTBResp }
 
-      when (full_insn && ((i == 0).B || io.inst(i).ready)) { nReady := Mux(exp.io.rvc, j+1.U, j+2.U) }
+      when (valid(j) && full_insn && ((i == 0).B || io.inst(i).ready)) { nReady := Mux(exp.io.rvc, j+1.U, j+2.U) }
 
       expand(i+1, Mux(exp.io.rvc, j+1.U, j+2.U), Mux(exp.io.rvc, curInst >> 16, curInst >> 32))
     } else {
-      when ((i == 0).B || io.inst(i).ready) { nReady := (i+1).U }
+      when (valid(i) && ((i == 0).B || io.inst(i).ready)) { nReady := (i+1).U }
       io.inst(i).valid := valid(i)
       io.inst(i).bits.xcpt0 := xcpt(i)
       io.inst(i).bits.xcpt1 := 0.U.asTypeOf(new FrontendExceptions)
