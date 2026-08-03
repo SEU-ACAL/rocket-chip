@@ -5,6 +5,7 @@ package freechips.rocketchip.jtag
 import scala.collection.SortedMap
 
 import chisel3._
+import chisel3.util.MuxCase
 import org.chipsalliance.cde.config.Parameters
 
 /** JTAG signals, viewed from the master side
@@ -225,31 +226,21 @@ object JtagTapGenerator {
       }
     }
 
-    controllerInternal.io.dataChainIn := bypassChain.io.chainOut  // default
-
-    def foldOutSelect(res: WhenContext, x: (Chain, Bool)): WhenContext = {
-      val (chain, select) = x
-      // Continue the WhenContext with if this chain is selected
-      res.elsewhen(select) {
-        controllerInternal.io.dataChainIn := chain.io.chainOut
+    controllerInternal.io.dataChainIn := MuxCase(
+      bypassChain.io.chainOut,
+      chainToSelect.map {
+        case (chain, select) => (select, chain.io.chainOut)
       }
-    }
+    )
 
-    val emptyWhen = when (false.B) { }  // Empty WhenContext to start things off
-    chainToSelect.toSeq.foldLeft(emptyWhen)(foldOutSelect).otherwise {
-      controllerInternal.io.dataChainIn := bypassChain.io.chainOut
+    chainToSelect.foreach {
+      case (chain, select) =>
+        chain.io.chainIn := Mux(
+          select,
+          controllerInternal.io.dataChainOut,
+          unusedChainOut
+        )
     }
-
-    def mapInSelect(x: (Chain, Bool)): Unit = {
-      val (chain, select) = x
-      when (select) {
-        chain.io.chainIn := controllerInternal.io.dataChainOut
-      } .otherwise {
-        chain.io.chainIn := unusedChainOut
-      }
-    }
-
-    chainToSelect.map(mapInSelect)
 
     internalIo.jtag <> controllerInternal.io.jtag
     internalIo.control <> controllerInternal.io.control
