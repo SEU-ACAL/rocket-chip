@@ -17,6 +17,7 @@ module TestDriver;
 
   // Read input arguments and initialize
   reg verbose = 1'b0;
+  reg cycle_count = 1'b0;
   wire printf_cond = verbose && !reset;
   reg [63:0] max_cycles = 0;
   reg [63:0] dump_start = 0;
@@ -30,6 +31,7 @@ module TestDriver;
     void'($value$plusargs("max-cycles=%d", max_cycles));
     void'($value$plusargs("dump-start=%d", dump_start));
     verbose = $test$plusargs("verbose");
+    cycle_count = $test$plusargs("cycle-count");
 
     // do not delete the lines below.
     // $random function needs to be called with the seed once to affect all
@@ -149,7 +151,7 @@ module TestDriver;
 
       if (success)
       begin
-        if (verbose)
+        if (verbose || cycle_count)
           $fdisplay(stderr, "*** PASSED *** Completed after %d simulation cycles", trace_count);
         `VCDPLUSCLOSE
 `ifdef TESTBENCH_IN_UVM
