@@ -41,19 +41,11 @@ class PulpRvTracerBlackBox(params: TraceCoreParams) extends BlackBox(Map(
   })
   // Keep the tracer self-contained in the Rocket-Chip resource jar.  The
   // generator must not depend on a sibling checkout at ../rv_tracer.
+  // Register one compilation unit. Its wrapper includes the package and all
+  // implementation sources; registering siblings as resources as well makes
+  // VCS compile each package twice (once standalone and once via `include`).
   private def rv(path: String): Unit = addResource(s"/vsrc/rv_tracer/$path")
-  rv("te_pkg.sv")
   rv("rv_tracer_wrapper.sv")
-  rv("rv_tracer.sv")
-  rv("te_branch_map.sv")
-  rv("te_filter.sv")
-  rv("te_packet_emitter.sv")
-  rv("te_priority.sv")
-  rv("te_reg.sv")
-  rv("te_resync_counter.sv")
-  rv("rv_tracer_math_compat.sv")
-  rv("lzc.sv")
-  rv("rv_tracer_compat.sv")
 }
 
 /**
