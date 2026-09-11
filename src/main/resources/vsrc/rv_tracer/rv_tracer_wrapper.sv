@@ -2,8 +2,8 @@
 // top.f.  Compile the complete tracer implementation as one unit so package
 // imports resolve in Design Compiler as well as VCS.
 `include "te_pkg.sv"
-`include "lzc.sv"
 `include "rv_tracer_math_compat.sv"
+`include "lzc.sv"
 `include "te_branch_map.sv"
 `include "te_filter.sv"
 `include "te_packet_emitter.sv"
