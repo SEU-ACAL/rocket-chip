@@ -854,20 +854,25 @@ class Rocket(tile: RocketTile)(implicit p: Parameters) extends CoreModule()(p)
     trace_ingress.io.in.exception := RegNext(!csr.io.trace(0).interrupt && csr.io.trace(0).exception)
     trace_ingress.io.in.trap_return := RegNext(csr.io.trap_return)
 
-    io.trace_core_ingress.get.group(0) <> trace_ingress.io.out
-    io.trace_core_ingress.get.priv := RegNext(csr.io.trace(0).priv)
-    io.trace_core_ingress.get.ctx := RegNext(csr.io.ptbr.asid)
+    // The PULP encoder's itype logic is on the critical path.  This boundary
+    // register must keep the complete event aligned: itype controls how iaddr
+    // and the trap sidebands are interpreted by the encoder.
+    val traceEvent = Wire(new TraceCoreInterface(traceIngressParams))
+    traceEvent.group(0) := trace_ingress.io.out
+    traceEvent.priv := RegNext(csr.io.trace(0).priv)
+    traceEvent.ctx := RegNext(csr.io.ptbr.asid)
     // Keep every trace sideband field from the same CSR trace snapshot.
     // In particular, CSR derives ECALL's architectural cause from the
     // retiring privilege level; its raw cause input can still describe a
     // different writeback exception.
-    io.trace_core_ingress.get.tval := RegNext(csr.io.trace(0).tval)
-    io.trace_core_ingress.get.cause := RegNext(csr.io.trace(0).cause)
+    traceEvent.tval := RegNext(csr.io.trace(0).tval)
+    traceEvent.cause := RegNext(csr.io.trace(0).cause)
     // CSR's evec is the destination selected for this precise trap; iaddr is
     // the faulting/interrupted PC carried by the same trace ingress event.
-    io.trace_core_ingress.get.tvec := RegNext(csr.io.evec)
-    io.trace_core_ingress.get.epc := trace_ingress.io.out.iaddr
-    io.trace_core_ingress.get.time := RegNext(csr.io.time)
+    traceEvent.tvec := RegNext(csr.io.evec)
+    traceEvent.epc := trace_ingress.io.out.iaddr
+    traceEvent.time := RegNext(csr.io.time)
+    io.trace_core_ingress.get := RegNext(traceEvent)
   }
 
   // hook up control/status regfile
