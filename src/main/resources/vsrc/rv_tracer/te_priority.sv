@@ -127,8 +127,10 @@ module te_priority (
     logic   nc_ppccd_br;
 
     // signals for compression
-    logic [$clog2(te_pkg::XLEN)-1:0]    addr_zeros, addr_ones;
-    logic [$clog2(te_pkg::XLEN)-1:0]    sign_extendable;
+    // lzc(WIDTH=XLEN+1) must represent counts 0..XLEN, requiring
+    // clog2(XLEN+1) bits (7 bits for the RV64/65-bit input).
+    logic [$clog2(te_pkg::XLEN+1)-1:0]  addr_zeros, addr_ones;
+    logic [$clog2(te_pkg::XLEN+1)-1:0]  sign_extendable;
     logic                               empty_zeros;
     logic                               empty_ones;
 

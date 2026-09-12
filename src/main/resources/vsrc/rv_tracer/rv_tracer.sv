@@ -503,6 +503,7 @@ module rv_tracer #(
 
     /* RESYNC COUNTER */
     te_resync_counter #(
+        .N(N),
         .MODE(te_pkg::CYCLE_MODE), // count cycles
         .MAX_VALUE(13'h1FFF)         // 8192
     ) i_te_resync_counter( // for testing we keep the def settings

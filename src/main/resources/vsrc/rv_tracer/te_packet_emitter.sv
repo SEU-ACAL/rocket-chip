@@ -439,6 +439,16 @@ module te_packet_emitter
                         endcase
                     end
 
+`ifdef TE_DISABLE_OVERSIZE_TRAP
+                    // The RV64 normal-encapsulation payload is 248 bits.
+                    // A trap carrying time, tval and a full/compressed
+                    // address can exceed that limit, so this unsupported
+                    // profile is suppressed explicitly.
+                    2'b10: begin
+                        packet_valid_o = '0;
+                        used_bits = '0;
+                    end
+`else
                     2'b10: begin
                         used_bits += 1 + te_pkg::PRIV_LEN + te_pkg::XLEN + 2 + address_off * 8 + 1 + te_pkg::TIME_LEN * 2;
 
@@ -502,6 +512,7 @@ module te_packet_emitter
                         end
                         endcase
                     end
+`endif
                     /*TODO: other cases*/
                     endcase
                 end

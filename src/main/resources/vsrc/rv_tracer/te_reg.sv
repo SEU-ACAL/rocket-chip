@@ -305,15 +305,18 @@ module te_reg #(
             // FILTER    
             // cause
             te_pkg::CAUSE_UPPER: begin
-                prdata_o[te_pkg::XLEN-1:0] = upper_cause_q;
+                // APB data is one 32-bit word; RV64 cause writes/reads use
+                // the low word (the current register map has no upper-word
+                // cause addresses).
+                prdata_o = upper_cause_q[31:0];
             end
 
             te_pkg::CAUSE_LOWER: begin
-                prdata_o[te_pkg::XLEN-1:0] = lower_cause_q;
+                prdata_o = lower_cause_q[31:0];
             end
 
             te_pkg::CAUSE_MATCH: begin
-                prdata_o[te_pkg::XLEN-1:0] = match_cause_q;
+                prdata_o = match_cause_q[31:0];
             end
 
             // tvec

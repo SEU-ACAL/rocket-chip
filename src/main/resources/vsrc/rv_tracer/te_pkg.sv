@@ -26,6 +26,11 @@ package te_pkg;
     localparam CTYPE_LEN = 2;
 `ifdef TE_ARCH64 // 64bit arch specific parameters
     localparam XLEN = 64;
+    // The fixed 248-bit normal-encapsulation payload cannot represent the
+    // optional RV64 trap packet carrying time, tval and an 8-byte address.
+    // The Chipyard integration uses NO_TIME=1; reject that oversized
+    // combination explicitly instead of elaborating out-of-range slices.
+    `define TE_DISABLE_OVERSIZE_TRAP
     // APB addresses to access registers
     // the value is added to the peripheral address
     /* FILTER */
