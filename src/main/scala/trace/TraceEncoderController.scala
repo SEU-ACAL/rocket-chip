@@ -149,9 +149,11 @@ class TraceEncoderController(addr: BigInt, beatBytes: Int, hartId: Int,
       (true.B, control_reg_bits)
     }
 
-    val pulpShadow = if (pulpConfig) Some(RegInit(VecInit(Seq.fill(64)(0.U(32.W))))) else None
+    // PULP APB registers occupy byte offsets 0x00..0x27 (40 words).
+    // Do not allocate shadow entries for the unused remainder of the 0x800 window.
+    val pulpShadow = if (pulpConfig) Some(RegInit(VecInit(Seq.fill(40)(0.U(32.W))))) else None
     val pulpFields = if (pulpConfig) {
-      (0 until 64).map { word =>
+      (0 until 40).map { word =>
         val offset = 0x40 + 4 * word
         offset -> Seq(RegField(32, { (_: Bool) => (true.B, pulpShadow.get(word)) }, { (valid: Bool, bits: UInt) =>
           when (valid && !pulpPending.get) {
