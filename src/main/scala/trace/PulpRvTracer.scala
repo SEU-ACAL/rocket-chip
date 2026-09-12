@@ -114,7 +114,9 @@ class LazyPulpRvTracerModule(outer: LazyPulpRvTracer) extends LazyModuleImp(oute
     val payload = RegInit(0.U(248.W))
     val bytes = Wire(Vec(31, UInt(8.W)))
     bytes := payload.asTypeOf(bytes)
-    val queue = Module(new TraceByteFifo(128))
+    // 512 x 8 matches the available single-port SRAM macro shape and gives
+    // the packet serializer enough storage for bounded backpressure drain.
+    val queue = Module(new TraceByteFifo(512))
     queue.io.clear := !io.enable
     val emit = RegInit(false.B)
     val index = RegInit(0.U(6.W))
@@ -124,7 +126,7 @@ class LazyPulpRvTracerModule(outer: LazyPulpRvTracer) extends LazyModuleImp(oute
     // rv_tracer's 3-stage pipeline.  At 1 IPC that gives at most 3 packets
     // in flight.  Reserve 3 × 33 = 99 B for the worst-case drain (F3SF1
     // trap packets), rounded to 112 for margin.
-    val queueAlmostFull = queue.io.count >= 16.U
+    val queueAlmostFull = queue.io.count >= (512 - 112).U
     when (!io.enable) {
       emit := false.B
       index := 0.U

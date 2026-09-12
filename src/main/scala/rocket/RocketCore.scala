@@ -839,32 +839,35 @@ class Rocket(tile: RocketTile)(implicit p: Parameters) extends CoreModule()(p)
 
   if (rocketParams.enableTraceCoreIngress) {
     val trace_ingress = Module(new TraceCoreIngress(traceIngressParams))
-    trace_ingress.io.in.valid := wb_valid || wb_xcpt
-    trace_ingress.io.in.taken := wb_reg_br_taken
-    trace_ingress.io.in.is_branch := wb_ctrl.branch
-    trace_ingress.io.in.is_jal := wb_ctrl.jal
-    trace_ingress.io.in.is_jalr := wb_ctrl.jalr
-    trace_ingress.io.in.insn := wb_reg_inst
-    trace_ingress.io.in.pc := wb_reg_pc
-    trace_ingress.io.in.is_compressed := !wb_reg_raw_inst(1, 0).andR // 2'b11 is uncompressed, everything else is compressed
-    trace_ingress.io.in.interrupt := csr.io.trace(0).interrupt && csr.io.trace(0).exception
-    trace_ingress.io.in.exception := !csr.io.trace(0).interrupt && csr.io.trace(0).exception
-    trace_ingress.io.in.trap_return := csr.io.trap_return
+    // Keep the complete event coherent while cutting the CPU-to-trace timing
+    // path.  Registering interrupt alone would mix it with the next event's
+    // exception/PC/metadata and corrupt packet semantics.
+    trace_ingress.io.in.valid := RegNext(wb_valid || wb_xcpt)
+    trace_ingress.io.in.taken := RegNext(wb_reg_br_taken)
+    trace_ingress.io.in.is_branch := RegNext(wb_ctrl.branch)
+    trace_ingress.io.in.is_jal := RegNext(wb_ctrl.jal)
+    trace_ingress.io.in.is_jalr := RegNext(wb_ctrl.jalr)
+    trace_ingress.io.in.insn := RegNext(wb_reg_inst)
+    trace_ingress.io.in.pc := RegNext(wb_reg_pc)
+    trace_ingress.io.in.is_compressed := RegNext(!wb_reg_raw_inst(1, 0).andR) // 2'b11 is uncompressed, everything else is compressed
+    trace_ingress.io.in.interrupt := RegNext(csr.io.trace(0).interrupt && csr.io.trace(0).exception)
+    trace_ingress.io.in.exception := RegNext(!csr.io.trace(0).interrupt && csr.io.trace(0).exception)
+    trace_ingress.io.in.trap_return := RegNext(csr.io.trap_return)
 
     io.trace_core_ingress.get.group(0) <> trace_ingress.io.out
-    io.trace_core_ingress.get.priv := csr.io.trace(0).priv 
-    io.trace_core_ingress.get.ctx := csr.io.ptbr.asid
+    io.trace_core_ingress.get.priv := RegNext(csr.io.trace(0).priv)
+    io.trace_core_ingress.get.ctx := RegNext(csr.io.ptbr.asid)
     // Keep every trace sideband field from the same CSR trace snapshot.
     // In particular, CSR derives ECALL's architectural cause from the
     // retiring privilege level; its raw cause input can still describe a
     // different writeback exception.
-    io.trace_core_ingress.get.tval := csr.io.trace(0).tval
-    io.trace_core_ingress.get.cause := csr.io.trace(0).cause
+    io.trace_core_ingress.get.tval := RegNext(csr.io.trace(0).tval)
+    io.trace_core_ingress.get.cause := RegNext(csr.io.trace(0).cause)
     // CSR's evec is the destination selected for this precise trap; iaddr is
     // the faulting/interrupted PC carried by the same trace ingress event.
-    io.trace_core_ingress.get.tvec := csr.io.evec
+    io.trace_core_ingress.get.tvec := RegNext(csr.io.evec)
     io.trace_core_ingress.get.epc := trace_ingress.io.out.iaddr
-    io.trace_core_ingress.get.time := csr.io.time
+    io.trace_core_ingress.get.time := RegNext(csr.io.time)
   }
 
   // hook up control/status regfile
