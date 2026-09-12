@@ -27,6 +27,8 @@ module rv_tracer_wrapper #(
   input logic [N-1:0][3:0] itype_i,
   input logic [63:0] cause_i,
   input logic [63:0] tval_i,
+  input logic [63:0] tvec_i,
+  input logic [63:0] epc_i,
   input logic [1:0] priv_i,
   input logic [N-1:0][63:0] iaddr_i,
   input logic [N-1:0][31:0] iretire_i,
@@ -89,7 +91,7 @@ module rv_tracer_wrapper #(
     .clk_i(clk_i), .rst_ni(rst_ni), .valid_i(valid_i), .itype_i(itype_i),
     .cause_i(cause_i), .tval_i(tval_i), .priv_i(priv_i), .iaddr_i(iaddr_i),
     .iretire_i(iretire_i), .ilastsize_i(ilastsize_i), .time_i(time_i),
-    .tvec_i('0), .epc_i('0), .encapsulator_ready_i(encapsulator_ready_i),
+    .tvec_i(tvec_i), .epc_i(epc_i), .encapsulator_ready_i(encapsulator_ready_i),
     .external_enable_i(external_enable_i),
     .paddr_i(paddr), .pwrite_i(pwrite), .psel_i(psel), .penable_i(penable),
     .pwdata_i(pwdata), .packet_valid_o(packet_valid_o),
@@ -101,6 +103,8 @@ module rv_tracer_wrapper #(
 `ifndef SYNTHESIS
   integer dbg_valid_count;
   integer dbg_packet_count;
+  integer filter_debug;
+  initial filter_debug = $test$plusargs("pulp_filter_debug");
   always_ff @(posedge clk_i or negedge rst_ni) begin
     if (!rst_ni) begin
       dbg_valid_count <= 0;
@@ -110,6 +114,23 @@ module rv_tracer_wrapper #(
         dbg_valid_count <= dbg_valid_count + 1;
         $display("PULP_RTL_VALID priv=%0d pc=%h retire=%h enable=%b ext=%b", priv_i,
                  iaddr_i[0], iretire_i[0], enable_i, external_enable_i);
+      end
+      // Keep trap-sideband observation independent of the bounded generic
+      // trace print above: the workload normally reaches its ECALL long
+      // after the first eight retired trace events.
+      if (|valid_i && itype_i[0] == 4'd1) begin
+        $display("PULP_RTL_EXCEPTION priv=%0d pc=%h epc=%h tvec=%h cause=%h tval=%h",
+                 priv_i, iaddr_i[0], epc_i, tvec_i, cause_i, tval_i);
+      end
+      if (i_rv_tracer.tc_resync[0]) begin
+        $display("PULP_RTL_RESYNC pc=%h", iaddr_i[0]);
+      end
+      if (filter_debug && |valid_i) begin
+        $display("PULP_FILTER_DEBUG valid=%b qualify=%b cause_f=%b mode=%b cause=%h match=%h tval_f=%b mode=%b tval=%h lower=%h upper=%h",
+                 valid_i[0], i_rv_tracer.nc_qualified[0], i_rv_tracer.cause_filter,
+                 i_rv_tracer.cause_mode, cause_i, i_rv_tracer.match_cause,
+                 i_rv_tracer.tval_filter, i_rv_tracer.tval_mode, tval_i,
+                 i_rv_tracer.lower_tval, i_rv_tracer.upper_tval);
       end
       if (|packet_valid_o && dbg_packet_count < 8) begin
         dbg_packet_count <= dbg_packet_count + 1;
@@ -137,6 +158,8 @@ module PulpRvTracerBlackBox #(
   input logic [3:0] itype_i_0,
   input logic [63:0] cause_i,
   input logic [63:0] tval_i,
+  input logic [63:0] tvec_i,
+  input logic [63:0] epc_i,
   input logic [1:0] priv_i,
   input logic [63:0] iaddr_i_0,
   input logic [31:0] iretire_i_0,
@@ -165,7 +188,7 @@ module PulpRvTracerBlackBox #(
   assign packet_payload_o_0 = packet_payload_vec[0];
   rv_tracer_wrapper #(.N(N)) impl (
     .clk_i, .rst_ni, .enable_i, .config_valid_i, .config_addr_i, .config_data_i,
-    .config_ready_o, .valid_i, .itype_i(itype_vec), .cause_i, .tval_i,
+    .config_ready_o, .valid_i, .itype_i(itype_vec), .cause_i, .tval_i, .tvec_i, .epc_i,
     .priv_i, .iaddr_i(iaddr_vec), .iretire_i(iretire_vec), .ilastsize_i, .time_i,
     .encapsulator_ready_i, .external_enable_i, .packet_valid_o, .packet_type_o(packet_type_vec),
     .packet_length_o(packet_length_vec), .packet_payload_o(packet_payload_vec), .stall_o

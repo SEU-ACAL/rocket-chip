@@ -47,5 +47,9 @@ class TraceCoreInterface (val params: TraceCoreParams) extends Bundle {
   val ctx = UInt(params.xlen.W)
   val tval = UInt(params.xlen.W)
   val cause = UInt(params.xlen.W)
+  // Trap target and faulting/interrupted PC for trace backends that support
+  // TVEC qualification and F3/SF1 EPC reporting.
+  val tvec = UInt(params.xlen.W)
+  val epc = UInt(params.xlen.W)
   val time = UInt(params.xlen.W)
 }

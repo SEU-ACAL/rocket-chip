@@ -102,6 +102,7 @@ module rv_tracer #(
     // not classified
     logic                                   nc_branch_map_empty;
     logic                                   clk_gated;
+    logic                                   encoder_ready;
     logic                                   turn_on_tracer_d, turn_on_tracer_q;
     logic                                   lossless_trace;
     logic                                   shallow_trace;
@@ -272,7 +273,10 @@ module rv_tracer #(
     assign nc_branch_map_empty = nc_branch_map_flush || (tc_branch_map_empty /*&& ~branch_q*/);
 
     // output
-    assign packet_valid_o = packet_emitted;
+    // Retain lossless encoder state until the encapsulator accepts it.
+    // This uses the existing ready signal rather than adding packet storage.
+    assign encoder_ready = encapsulator_ready_i || !lossless_trace;
+    assign packet_valid_o = packet_emitted & {N{encoder_ready}};
     // sideband
     assign stall_o = ~encapsulator_ready_i && lossless_trace;
 
@@ -288,39 +292,42 @@ module rv_tracer #(
         // init
         branch_valid = '0;
         branch_taken = '0;
-        exception0_d = exception0_q;
-        exception1_d = exception1_q;
-        exception2_d = exception2_q;
-        interrupt0_d = interrupt0_q;
-        interrupt1_d = interrupt1_q;
-        interrupt2_d = interrupt2_q;
+        exception0_d = 1'b0;
+        // Advance sampled trace metadata even when the core has a bubble
+        // after an exception.  A precise trap is non-retired, so waiting for
+        // a subsequent valid instruction leaves it permanently in stage 0.
+        exception1_d = exception0_q;
+        exception2_d = exception1_q;
+        interrupt0_d = 1'b0;
+        interrupt1_d = interrupt0_q;
+        interrupt2_d = interrupt1_q;
         updiscon0_d = updiscon0_q;
         updiscon1_d = updiscon1_q;
         updiscon2_d = updiscon2_q;
         cause0_d = cause0_q;
-        cause1_d = cause1_q;
-        cause2_d = cause2_q;
+        cause1_d = cause0_q;
+        cause2_d = cause1_q;
         tval0_d = tval0_q;
-        tval1_d = tval1_q;
-        tval2_d = tval2_q;
+        tval1_d = tval0_q;
+        tval2_d = tval1_q;
         itype0_d = itype0_q;
-        itype1_d = itype1_q;
+        itype1_d = itype0_q;
         priv_lvl0_d = priv_lvl0_q;
-        priv_lvl1_d = priv_lvl1_q;
+        priv_lvl1_d = priv_lvl0_q;
         qualified0_d = qualified0_q;
-        qualified1_d = qualified1_q;
-        qualified2_d = qualified2_q;
+        qualified1_d = qualified0_q;
+        qualified2_d = qualified1_q;
         iretired0_d = iretired0_q;
-        iretired1_d = iretired1_q;
+        iretired1_d = iretired0_q;
         tvec0_d = tvec0_q;
-        tvec1_d = tvec1_q;
+        tvec1_d = tvec0_q;
         address0_d = address0_q;
         address1_d = address1_q;
         epc0_d = epc0_q;
-        epc1_d = epc1_q;
-        epc2_d = epc2_q;
+        epc1_d = epc0_q;
+        epc2_d = epc1_q;
         time0_d = time0_q;
-        time1_d = time1_q;
+        time1_d = time0_q;
         privchange_d = privchange_q;
         // context_change_d = context_change_q;
         // precise_context_report_d = precise_context_report_q; // requires ctype signal CPU side
@@ -481,6 +488,7 @@ module rv_tracer #(
     ) i_te_branch_map(
         .clk_i         (clk_gated),
         .rst_ni        (rst_ni),
+        .enable_i      (encoder_ready),
         .valid_i       (branch_valid & qualified0_q & valid0_q),
         .branch_taken_i(branch_taken),
         .flush_i       (nc_branch_map_flush),
@@ -500,6 +508,7 @@ module rv_tracer #(
     ) i_te_resync_counter( // for testing we keep the def settings
         .clk_i           (clk_gated),
         .rst_ni          (rst_ni),
+        .enable_i         (encoder_ready),
         .trace_enabled_i (trace_enable),
         .packet_emitted_i(packet_emitted),
         .resync_rst_i    (resync_rst),
@@ -517,7 +526,11 @@ module rv_tracer #(
         if (N == 1 || (N > 1 && ONLY_BRANCHES)) begin
             for (genvar i = 0; i < N; i++) begin
                 te_filter i_te_filter(
-                    .trace_enable_i   (trace_enable || trace_activated), // tracks 1st branch if 1st inst
+                    // TRACE_STATE is the software-visible qualification
+                    // control. `trace_enable` is a controller-enable edge
+                    // latch and does not clear when TRACE_STATE is written
+                    // low, so it must not keep filtering active on its own.
+                    .trace_enable_i   (trace_activated), // tracks 1st branch if 1st inst
                     .cause_filter_i   (cause_filter),
                     .upper_cause_i    (upper_cause),
                     .lower_cause_i    (lower_cause),
@@ -563,6 +576,7 @@ module rv_tracer #(
             te_priority i_te_priority(
                 .clk_i                    (clk_gated),
                 .rst_ni                   (rst_ni),
+                .enable_i                 (encoder_ready),
                 .valid_i                  (valid0_q[0] || (enc_activated_q || enc_deactivated_q)), // necessary to generate F3SF3 packet
                 .lc_exception_i           (exception2_q || interrupt2_q),
                 .lc_updiscon_i            (updiscon2_q[0]),
@@ -585,7 +599,10 @@ module rv_tracer #(
                 .tc_enc_disabled_i        (enc_deactivated_q),
                 .tc_opmode_change_i       (enc_config_change_q),
                 .tc_final_qualified_i     (tc_final_qualified),
-                .tc_packets_lost_i        (~encapsulator_ready_i), // non mandatory
+                // The integration has no true drop indication.  Serializer
+                // busy is backpressure, not packet loss; reporting it here
+                // recursively generated false TraceLost Support packets.
+                .tc_packets_lost_i        (1'b0),
                 .nc_exception_i           (exception0_q || interrupt0_q),
                 .nc_privchange_i          (privchange_d),
                 //.nc_context_change_i(),
@@ -616,6 +633,7 @@ module rv_tracer #(
             te_packet_emitter i_te_packet_emitter(
                 .clk_i                    (clk_gated),
                 .rst_ni                   (rst_ni),
+                .enable_i                 (encoder_ready),
                 .valid_i                  (packet_valid[0]),
                 .packet_format_i          (packet_format[0]),
                 .packet_f_sync_subformat_i(packet_f_sync_subformat[0]),
@@ -669,6 +687,7 @@ module rv_tracer #(
                     te_priority i_te_priority(
                         .clk_i                    (clk_gated),
                         .rst_ni                   (rst_ni),
+                        .enable_i                 (encoder_ready),
                         .valid_i                  (|valid0_q || (enc_activated_q || enc_deactivated_q)),
                         .lc_exception_i           (exception2_q || interrupt2_q),
                         .lc_updiscon_i            (updiscon2_q[i]),
@@ -691,7 +710,7 @@ module rv_tracer #(
                         .tc_enc_disabled_i        (enc_deactivated_q),
                         .tc_opmode_change_i       (enc_config_change_q),
                         .tc_final_qualified_i     (tc_final_qualified),
-                        .tc_packets_lost_i        (~encapsulator_ready_i), // non mandatory
+                        .tc_packets_lost_i        (1'b0),
                         .nc_exception_i           (exception0_q || interrupt0_q),
                         .nc_privchange_i          (privchange_d),
                         //.nc_context_change_i(),
@@ -722,6 +741,7 @@ module rv_tracer #(
                     te_packet_emitter i_te_packet_emitter(
                         .clk_i                    (clk_gated),
                         .rst_ni                   (rst_ni),
+                        .enable_i                 (encoder_ready),
                         .valid_i                  (packet_valid[i]),
                         .packet_format_i          (packet_format[i]),
                         .packet_f_sync_subformat_i(packet_f_sync_subformat[i]),
@@ -771,6 +791,7 @@ module rv_tracer #(
                     te_priority i_te_priority(
                         .clk_i                    (clk_gated),
                         .rst_ni                   (rst_ni),
+                        .enable_i                 (encoder_ready),
                         .valid_i                  (|valid0_q || (enc_activated_q || enc_deactivated_q)),
                         .lc_exception_i           (exception2_q || interrupt2_q),
                         .lc_updiscon_i            (updiscon2_q[i]),
@@ -793,7 +814,7 @@ module rv_tracer #(
                         .tc_enc_disabled_i        (enc_deactivated_q),
                         .tc_opmode_change_i       (enc_config_change_q),
                         .tc_final_qualified_i     (tc_final_qualified),
-                        .tc_packets_lost_i        (~encapsulator_ready_i), // non mandatory
+                        .tc_packets_lost_i        (1'b0),
                         .nc_exception_i           (exception0_q || interrupt0_q),
                         .nc_privchange_i          (privchange_d),
                         //.nc_context_change_i(),
@@ -824,6 +845,7 @@ module rv_tracer #(
                     te_packet_emitter i_te_packet_emitter(
                         .clk_i                    (clk_gated),
                         .rst_ni                   (rst_ni),
+                        .enable_i                 (encoder_ready),
                         .valid_i                  (packet_valid[i]),
                         .packet_format_i          (packet_format[i]),
                         .packet_f_sync_subformat_i(packet_f_sync_subformat[i]),
@@ -929,7 +951,7 @@ module rv_tracer #(
             branch_taken_q <= '0;
             branch_q <= '0;
             turn_on_tracer_q <= '0;
-        end else begin
+        end else if (encoder_ready) begin
             exception0_q <= exception0_d;
             exception1_q <= exception1_d;
             exception2_q <= exception2_d;

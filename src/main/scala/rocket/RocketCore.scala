@@ -854,8 +854,16 @@ class Rocket(tile: RocketTile)(implicit p: Parameters) extends CoreModule()(p)
     io.trace_core_ingress.get.group(0) <> trace_ingress.io.out
     io.trace_core_ingress.get.priv := csr.io.trace(0).priv 
     io.trace_core_ingress.get.ctx := csr.io.ptbr.asid
-    io.trace_core_ingress.get.tval := csr.io.tval
-    io.trace_core_ingress.get.cause := csr.io.cause
+    // Keep every trace sideband field from the same CSR trace snapshot.
+    // In particular, CSR derives ECALL's architectural cause from the
+    // retiring privilege level; its raw cause input can still describe a
+    // different writeback exception.
+    io.trace_core_ingress.get.tval := csr.io.trace(0).tval
+    io.trace_core_ingress.get.cause := csr.io.trace(0).cause
+    // CSR's evec is the destination selected for this precise trap; iaddr is
+    // the faulting/interrupted PC carried by the same trace ingress event.
+    io.trace_core_ingress.get.tvec := csr.io.evec
+    io.trace_core_ingress.get.epc := trace_ingress.io.out.iaddr
     io.trace_core_ingress.get.time := csr.io.time
   }
 

@@ -539,15 +539,15 @@ module te_reg #(
             `ifdef TE_ARCH64
             // cause
             te_pkg::CAUSE_UPPER: begin
-                upper_cause_d = pwdata_i[te_pkg::XLEN-1:0];
+                upper_cause_d = {{(te_pkg::XLEN-32){1'b0}}, pwdata_i};
             end
 
             te_pkg::CAUSE_LOWER: begin
-                lower_cause_d = pwdata_i[te_pkg::XLEN-1:0];
+                lower_cause_d = {{(te_pkg::XLEN-32){1'b0}}, pwdata_i};
             end
 
             te_pkg::CAUSE_MATCH: begin
-                match_cause_d = pwdata_i[te_pkg::XLEN-1:0];
+                match_cause_d = {{(te_pkg::XLEN-32){1'b0}}, pwdata_i};
             end
 
             // tvec
@@ -749,7 +749,10 @@ module te_reg #(
             shallow_trace_q <= '0;
             nocontext_q <= '1;
             notime_q <= '1;
-            trace_activated_q <= '1;
+            // Do not emit a Start packet while the Chipyard transport is
+            // still disabled.  external_enable_i arms tracing after the
+            // controller/SPI path is live.
+            trace_activated_q <= '0;
             setup_q <= '0;
         end else begin
             trace_enable_q <= trace_enable_d;

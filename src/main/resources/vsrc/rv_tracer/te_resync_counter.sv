@@ -35,6 +35,7 @@ module te_resync_counter #(
     (
     input logic         clk_i,
     input logic         rst_ni,
+    input logic         enable_i,
 
     input logic         trace_enabled_i, // it comes from filter
     input logic [N-1:0] packet_emitted_i,
@@ -98,7 +99,7 @@ module te_resync_counter #(
     always_ff @(posedge clk_i, negedge rst_ni) begin
         if (~rst_ni) begin
             counter_q <= '0;
-        end else begin
+        end else if (enable_i) begin
             counter_q <= counter_d;
         end
     end

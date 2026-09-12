@@ -22,6 +22,7 @@ module te_packet_emitter
 (
     input logic                                 clk_i,
     input logic                                 rst_ni,
+    input logic                                 enable_i,
     input logic                                 valid_i,
 
     // necessary info to assemble packet
@@ -177,7 +178,7 @@ module te_packet_emitter
             flush_q <= '0;
             resync_q <= '0;
             resync_addr_q <= '0;
-        end else begin
+        end else if (enable_i) begin
             latest_addr_q <= latest_addr_d;
             resync_q <= resync_d;
             resync_addr_q <= resync_addr_d;
@@ -1045,7 +1046,13 @@ module te_packet_emitter
             if (packet_type_o == te_pkg::F1 || 
                 packet_type_o == te_pkg::F2) begin // F1, F2
                 latest_addr_d = tc_address_i;
-                addr_to_compress_o = diff_addr;
+                // The selection above already supplies the full address for
+                // FULL_ADDRESS mode.  Only delta packets may replace it with
+                // the computed difference; otherwise diff_addr is zero and
+                // corrupts every F1/F2 address.
+                if (ioptions_i.delta_address_en) begin
+                    addr_to_compress_o = diff_addr;
+                end
             end
             if (packet_type_o == te_pkg::F3SF0) begin // F3SF0
                 if (resync_q) begin

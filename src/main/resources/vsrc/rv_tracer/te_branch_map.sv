@@ -30,6 +30,7 @@ module te_branch_map #(
 (
     input logic                                 clk_i,
     input logic                                 rst_ni,
+    input logic                                 enable_i,
 
     input logic [N-1:0]                         valid_i,
     input logic [N-1:0]                         branch_taken_i,
@@ -125,7 +126,7 @@ module te_branch_map #(
             status_left_q <= '0;
             valid_q <= '0;
             branch_taken_q <= '0;
-        end else begin
+        end else if (enable_i) begin
             valid_q <= valid_d;
             branch_taken_q <= branch_taken_d;
             map_q <= map_d;

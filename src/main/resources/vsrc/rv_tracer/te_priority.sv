@@ -26,6 +26,7 @@ module te_priority (
 
     input logic                             clk_i,
     input logic                             rst_ni,
+    input logic                             enable_i,
 
     input logic                             valid_i,
 
@@ -187,7 +188,7 @@ module te_priority (
             lc_ended_ntr_q <= '0;
             lc_ended_rep_q <= '0;
             tc_resync_br_q <= '0;
-        end else begin
+        end else if (enable_i) begin
             tc_reported_q <= tc_reported_d;
             tc_resync_br_q <= tc_resync_br_d;
             lc_ended_ntr_q <= lc_ended_ntr_d;
@@ -214,7 +215,7 @@ module te_priority (
         lc_ended_ntr_d = '0;
         lc_ended_rep_d = '0;
         
-        if(valid_i) begin
+        if(valid_i || tc_exception_i || lc_exception_i) begin
             // format 3 subformat 3 packet generation
             /*  this if is not in the flowchart, but it's only described.
                 To me it made more sense to have it as the first if. */
@@ -233,7 +234,19 @@ module te_priority (
             /* TODO:    if for halted and reset sideband signals,
                         if at least one asserted -> considers unqualified*/  
             end else if(tc_qualified_i) begin
-                if(lc_exception_i) begin
+                // Qualification and the precise exception sideband arrive in
+                // the same tc pipeline stage.  Waiting for lc_exception_i
+                // loses a one-cycle qualified trap after qualification has
+                // already fallen, so emit its F3/SF1 packet from tc data.
+                if(tc_exception_i) begin
+                    packet_format_o = te_pkg::F_SYNC;
+                    packet_f_sync_subformat_o = te_pkg::SF_TRAP;
+                    resync_timer_rst_o = '1;
+                    lc_tc_mux_o = '1;
+                    reported_status = '1;
+                    thaddr_o = '0;
+                    valid_o = '1;
+                end else if(lc_exception_i) begin
                     if(tc_exc_only) begin
                         packet_format_o = te_pkg::F_SYNC;
                         packet_f_sync_subformat_o = te_pkg::SF_TRAP;

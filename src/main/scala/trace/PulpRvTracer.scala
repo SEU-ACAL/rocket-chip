@@ -26,6 +26,8 @@ class PulpRvTracerBlackBox(params: TraceCoreParams) extends BlackBox(Map(
     val itype_i = Input(Vec(params.nGroups, UInt(4.W)))
     val cause_i = Input(UInt(params.xlen.W))
     val tval_i = Input(UInt(params.xlen.W))
+    val tvec_i = Input(UInt(params.xlen.W))
+    val epc_i = Input(UInt(params.xlen.W))
     val priv_i = Input(UInt(2.W))
     val iaddr_i = Input(Vec(params.nGroups, UInt(params.xlen.W)))
     val iretire_i = Input(Vec(params.nGroups, UInt(32.W)))
@@ -84,13 +86,28 @@ class LazyPulpRvTracerModule(outer: LazyPulpRvTracer) extends LazyModuleImp(oute
     // The PULP filter has only the two architectural privilege bits. Rocket
     // encodes Debug Mode separately in priv(2), so do not alias Debug-ROM
     // retirements to M-mode when a M-only filter is selected.
-    bb.io.valid_i := (io.enable && !io.in.priv(2) && (g.iretire =/= 0.U)).asUInt
+    // TraceCoreIngress deliberately marks precise exceptions and interrupts
+    // as non-retired.  They still carry an architectural trace event (cause
+    // and tval), so forwarding only retired instructions drops every F3/SF1
+    // packet before rv_tracer can serialize it.
+    val traceEvent = (g.iretire =/= 0.U) ||
+      (g.itype === TraceItype.ITException) ||
+      (g.itype === TraceItype.ITInterrupt)
+    bb.io.valid_i := (io.enable && !io.in.priv(2) && traceEvent).asUInt
     bb.io.itype_i(0) := g.itype.asUInt
     bb.io.cause_i := io.in.cause
     bb.io.tval_i := io.in.tval
+    bb.io.tvec_i := io.in.tvec
+    bb.io.epc_i := io.in.epc
     bb.io.priv_i := io.in.priv(1, 0)
     bb.io.iaddr_i(0) := g.iaddr
-    bb.io.iretire_i(0) := g.iretire.pad(32)
+    // TraceCoreIngress reports a retired-instruction count, while PULP's
+    // iretire input is the block length in halfwords.  A single 32-bit
+    // Rocket instruction therefore contributes two halfwords, not one.
+    // Passing the raw count made rv_tracer reconstruct every RV32I/RV64I
+    // address two bytes before its actual PC.
+    bb.io.iretire_i(0) := Mux(g.iretire =/= 0.U,
+      (1.U(32.W) << g.ilastsize), 0.U)
     bb.io.ilastsize_i := g.ilastsize
     bb.io.time_i := io.in.time.pad(64)
 
