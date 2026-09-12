@@ -46,30 +46,58 @@ class TraceByteFifo(depth: Int) extends Module {
     val count = Output(UInt(countWidth.W))
   })
 
-  val mem = Mem(depth, UInt(8.W))
+  // The trace FIFO is backed by a single-port synchronous SRAM.  Reads and
+  // writes are explicitly arbitrated below so FIRRTL cannot infer a
+  // read/write dual-port memory from independent Mem accesses.
+  val mem = SyncReadMem(depth, UInt(8.W))
   val rptr = RegInit(0.U(ptrWidth.W))
   val wptr = RegInit(0.U(ptrWidth.W))
   val count = RegInit(0.U(countWidth.W))
+  val outData = RegInit(0.U(8.W))
+  val outValid = RegInit(false.B)
+  val readPending = RegInit(false.B)
 
-  io.enq.ready := (count =/= depth.U) || io.deq.fire
-  io.deq.valid := count =/= 0.U
-  io.deq.bits := mem(rptr)
+  val readReq = !outValid && !readPending && count =/= 0.U && !io.clear
+  val deqFire = outValid && io.deq.ready && !io.clear
+
+  // A single-port SRAM gets at most one operation per cycle.  Reading has
+  // priority when the output register is empty; otherwise a write may occur.
+  // This preserves lossless Decoupled behavior at the cost of serialized
+  // read/write bandwidth, which is appropriate for the trace sink FIFO.
+  io.enq.ready := !io.clear && !readReq && !readPending && ((count =/= depth.U) || deqFire)
+  io.deq.valid := outValid
+  io.deq.bits := outData
   io.count := count
+
+  val writeFire = io.enq.valid && io.enq.ready
+  val memEnable = readReq || writeFire
+  val memAddr = Mux(readReq, rptr, wptr)
+  val readData = mem.readWrite(memAddr, io.enq.bits, memEnable, writeFire)
 
   when (io.clear) {
     rptr := 0.U
     wptr := 0.U
     count := 0.U
+    outValid := false.B
+    readPending := false.B
   }.otherwise {
-    when (io.enq.fire) {
-      mem(wptr) := io.enq.bits
+    when (readReq) {
+      readPending := true.B
+    }.elsewhen (readPending) {
+      outData := readData
+      outValid := true.B
+      readPending := false.B
+    }.elsewhen (deqFire) {
+      outValid := false.B
+    }
+    when (writeFire) {
       wptr := wptr + 1.U
     }
-    when (io.deq.fire) {
+    when (deqFire) {
       rptr := rptr + 1.U
     }
-    when (io.enq.fire =/= io.deq.fire) {
-      count := count + Mux(io.enq.fire, 1.U, (-1).S(countWidth.W).asUInt)
+    when (writeFire =/= deqFire) {
+      count := count + Mux(writeFire, 1.U, (-1).S(countWidth.W).asUInt)
     }
   }
 }
