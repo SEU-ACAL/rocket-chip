@@ -323,6 +323,7 @@ module rv_tracer #(
         // no_context_report_d = no_context_report_q; // ibidem
         // imprecise_context_report_d = imprecise_context_report_q; // ibidem
         branch_d = branch_q;
+        turn_on_tracer_d = turn_on_tracer_q;
 
         // itype, iretired and address
         // it works for all three cases
