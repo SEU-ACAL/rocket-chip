@@ -32,7 +32,6 @@ class PulpRvTracerBlackBox(params: TraceCoreParams) extends BlackBox(Map(
     val iaddr_i = Input(Vec(params.nGroups, UInt(params.xlen.W)))
     val iretire_i = Input(Vec(params.nGroups, UInt(32.W)))
     val ilastsize_i = Input(UInt(params.nGroups.W))
-    val time_i = Input(UInt(64.W))
     val encapsulator_ready_i = Input(Bool())
     val external_enable_i = Input(Bool())
     val packet_valid_o = Output(UInt(params.nGroups.W))
@@ -109,7 +108,6 @@ class LazyPulpRvTracerModule(outer: LazyPulpRvTracer) extends LazyModuleImp(oute
     bb.io.iretire_i(0) := Mux(g.iretire =/= 0.U,
       (1.U(32.W) << g.ilastsize), 0.U)
     bb.io.ilastsize_i := g.ilastsize
-    bb.io.time_i := io.in.time.pad(64)
 
     val payload = RegInit(0.U(248.W))
     val bytes = Wire(Vec(31, UInt(8.W)))

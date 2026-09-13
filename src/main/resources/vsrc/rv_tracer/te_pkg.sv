@@ -26,11 +26,6 @@ package te_pkg;
     localparam CTYPE_LEN = 2;
 `ifdef TE_ARCH64 // 64bit arch specific parameters
     localparam XLEN = 64;
-    // The fixed 248-bit normal-encapsulation payload cannot represent the
-    // optional RV64 trap packet carrying time, tval and an 8-byte address.
-    // The Chipyard integration uses NO_TIME=1; reject that oversized
-    // combination explicitly instead of elaborating out-of-range slices.
-    `define TE_DISABLE_OVERSIZE_TRAP
     // APB addresses to access registers
     // the value is added to the peripheral address
     /* FILTER */
@@ -83,6 +78,10 @@ package te_pkg;
     localparam IADDR_MATCH = 8'h1a;
 `endif
     /* both archs parameters */
+    // RV64 Chipyard's default VM mode is Sv39: canonical addresses require
+    // 39 bits and their signed deltas require 40 bits.  This is deliberately
+    // separate from XLEN, which still defines architectural packet fields.
+    localparam ADDR_COMPRESS_WIDTH = (XLEN == 64) ? 40 : XLEN + 1;
     // localparams for resync counter
     localparam CYCLE_MODE = 0;
     localparam PACKET_MODE = 1;
@@ -95,8 +94,6 @@ package te_pkg;
     // localparams for filter mode
     localparam RANGE_MODE = 1'b0;
     localparam EQUAL_MODE = 1'b1;
-    // localparam for time signal
-    localparam TIME_LEN = 64;
     // localparam for itype
     localparam ITYPE_LEN = 4;
     // localparam for iretire

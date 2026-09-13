@@ -62,9 +62,6 @@ module te_reg #(
 
     output logic                            trace_enable_o,    // turned off by filter
     output logic                            trace_activated_o, // managed by user
-    // packet_emitter settings and control
-    output logic                            nocontext_o,
-    output logic                            notime_o,
     output logic                            encoder_mode_o, // hardwired to 0 - can only be 0 according to spec
     output te_pkg::ioptions_s               configuration_o,
     output logic                            lossless_trace_o,
@@ -117,8 +114,6 @@ module te_reg #(
     logic [te_pkg::XLEN-1:0]        match_iaddr_d, match_iaddr_q;
     logic                           iaddr_mode_d, iaddr_mode_q;
     logic                           trace_activated_d, trace_activated_q;
-    logic                           nocontext_d, nocontext_q;
-    logic                           notime_d, notime_q;
     te_pkg::ioptions_s              configuration_d, configuration_q;
     logic                           lossless_trace_d, lossless_trace_q;
     logic                           shallow_trace_d, shallow_trace_q;
@@ -159,8 +154,6 @@ module te_reg #(
     assign configuration_o = configuration_q;
     assign lossless_trace_o = lossless_trace_q; // if == 1 stalls the core when the encapsulator buffer is full
     assign shallow_trace_o = shallow_trace_q; // if == 1 flushes the branch map at each packet emitted
-    assign nocontext_o = nocontext_q;
-    assign notime_o = notime_q;
     assign encoder_mode_o = '0; // hardwired
     assign trace_activated_o = trace_activated_q;
     
@@ -200,8 +193,6 @@ module te_reg #(
         trace_activated_d = trace_activated_q;
         lossless_trace_d = lossless_trace_q;
         shallow_trace_d = shallow_trace_q;
-        notime_d = notime_q;
-        nocontext_d = nocontext_q;
         configuration_d = configuration_q;
         upper_cause_d = upper_cause_q;
         lower_cause_d = lower_cause_q;
@@ -272,11 +263,11 @@ module te_reg #(
 
             // PACKET EMITTER
             te_pkg::NO_TIME: begin
-                prdata_o[0] = notime_q;
+                prdata_o[0] = 1'b1;
             end
 
             te_pkg::NO_CONTEXT: begin
-                prdata_o[0] = nocontext_q;
+                prdata_o[0] = 1'b1;
             end
 
             te_pkg::DELTA_ADDRESS: begin
@@ -504,11 +495,11 @@ module te_reg #(
 
             // PACKET EMITTER
             te_pkg::NO_TIME: begin
-                notime_d = pwdata_i[0];
+                // Read-only one: time packets are unsupported in this profile.
             end
 
             te_pkg::NO_CONTEXT: begin
-                nocontext_d = pwdata_i[0];
+                // Read-only one: no CPU context sideband is integrated.
             end
 
             te_pkg::DELTA_ADDRESS: begin
@@ -750,8 +741,6 @@ module te_reg #(
             configuration_q.jump_target_cache_en <= '0;
             lossless_trace_q <= '0;
             shallow_trace_q <= '0;
-            nocontext_q <= '1;
-            notime_q <= '1;
             // Do not emit a Start packet while the Chipyard transport is
             // still disabled.  external_enable_i arms tracing after the
             // controller/SPI path is live.
@@ -788,8 +777,6 @@ module te_reg #(
             configuration_q <= configuration_d;
             lossless_trace_q <= lossless_trace_d;
             shallow_trace_q <= shallow_trace_d;
-            nocontext_q <= nocontext_d;
-            notime_q <= notime_d;
             trace_activated_q <= trace_activated_d;
             setup_q <= setup_d;
         end

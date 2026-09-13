@@ -36,12 +36,6 @@ module rv_tracer #(
     input logic [N-1:0][te_pkg::XLEN-1:0]           iaddr_i, // pc of 1st inst in block
     input logic [N-1:0][te_pkg::IRETIRE_LEN-1:0]    iretire_i, // length of block in halfwords
     input logic [N-1:0]                             ilastsize_i, // length of last inst in 2^ilastsize halfword
-    // non mandatory inputs
-    input logic [te_pkg::TIME_LEN-1:0]              time_i,
-    //input logic [:0]                                context_i,
-    //input logic [te_pkg::CTYPE_LEN-1:0]             ctype_i, // spec says it's 1 or 2 bit wide
-    //input logic [te_pkg::TRIGGER_LEN-1:0]           trigger_i, // must be supported CPU side
-
     // support inputs
     input logic [te_pkg::XLEN-1:0]                  tvec_i, // tvec_q, contains trap handler address
     input logic [te_pkg::XLEN-1:0]                  epc_i, // epc_q, required for format 3 subformat 1
@@ -76,8 +70,6 @@ module rv_tracer #(
     // registers
     logic                                   trace_activated;
     logic                                   trace_enable;
-    logic                                   nocontext;
-    logic                                   notime;
     logic                                   encoder_mode;
     // filter
     logic                                   trigger_trace_on; // hardwired to 0?
@@ -162,8 +154,6 @@ module rv_tracer #(
     logic [te_pkg::XLEN-1:0]                epc0_d, epc0_q;
     logic [te_pkg::XLEN-1:0]                epc1_d, epc1_q;
     logic [te_pkg::XLEN-1:0]                epc2_d, epc2_q;
-    logic [te_pkg::TIME_LEN-1:0]            time0_d, time0_q;
-    logic [te_pkg::TIME_LEN-1:0]            time1_d, time1_q;
     logic                                   tc_first_qualified;
     logic                                   tc_final_qualified;
     logic [N-1:0]                           updiscon0_d, updiscon0_q;
@@ -326,8 +316,6 @@ module rv_tracer #(
         epc0_d = epc0_q;
         epc1_d = epc0_q;
         epc2_d = epc1_q;
-        time0_d = time0_q;
-        time1_d = time0_q;
         privchange_d = privchange_q;
         // context_change_d = context_change_q;
         // precise_context_report_d = precise_context_report_q; // requires ctype signal CPU side
@@ -402,8 +390,6 @@ module rv_tracer #(
             epc0_d = epc_i;
             epc1_d = epc0_q;
             epc2_d = epc1_q;
-            time0_d = time_i;
-            time1_d = time0_q;
             privchange_d = (priv_lvl0_q != priv_lvl1_q) && |valid_i;
             // context_change_d; // TODO
             //precise_context_report_d; // requires ctype signal CPU side
@@ -466,8 +452,6 @@ module rv_tracer #(
         .iaddr_mode_o        (iaddr_mode),
         .trace_enable_o      (trace_enable),
         .trace_activated_o   (trace_activated),
-        .nocontext_o         (nocontext),
-        .notime_o            (notime),
         .encoder_mode_o      (encoder_mode),
         .configuration_o     (enc_config_d),
         .lossless_trace_o    (lossless_trace),
@@ -646,12 +630,9 @@ module rv_tracer #(
                 .tc_tval_i                (tval1_q),
                 .tc_interrupt_i           (interrupt1_q),
                 .tc_resync_i              (tc_resync[0]),
-                .nocontext_i              (nocontext),
-                .notime_i                 (notime),
                 .tc_branch_i              (branch_q),
                 .tc_branch_taken_i        (branch_taken_q),
                 .tc_priv_i                (priv_lvl1_q),
-                .tc_time_i                (time1_q), // non mandatory
                 //.context_i(), // non mandatory
                 .tc_address_i             (address1_q[0]),
                 .lc_tc_mux_i              (lc_tc_mux[0]),
@@ -754,12 +735,9 @@ module rv_tracer #(
                         .tc_tval_i                (tval1_q),
                         .tc_interrupt_i           (interrupt1_q),
                         .tc_resync_i              (tc_resync[i]),
-                        .nocontext_i              (nocontext),
-                        .notime_i                 (notime),
                         .tc_branch_i              (branch_q),
                         .tc_branch_taken_i        (branch_taken_q),
                         .tc_priv_i                (priv_lvl1_q),
-                        .tc_time_i                (time1_q), // non mandatory
                         //.context_i(), // non mandatory
                         .tc_address_i             (address1_q[i]),
                         .lc_tc_mux_i              (lc_tc_mux[i]),
@@ -858,12 +836,9 @@ module rv_tracer #(
                         .tc_tval_i                (tval1_q),
                         .tc_interrupt_i           (interrupt1_q),
                         .tc_resync_i              (tc_resync[i]),
-                        .nocontext_i              (nocontext),
-                        .notime_i                 (notime),
                         .tc_branch_i              (branch_q),
                         .tc_branch_taken_i        (branch_taken_q),
                         .tc_priv_i                (priv_lvl1_q),
-                        .tc_time_i                (time1_q), // non mandatory
                         //.context_i(), // non mandatory
                         .tc_address_i             (address1_q[i]),
                         .lc_tc_mux_i              (lc_tc_mux[i]),
@@ -931,8 +906,6 @@ module rv_tracer #(
             epc0_q <= '0;
             epc1_q <= '0;
             epc2_q <= '0;
-            time0_q <= '0;
-            time1_q <= '0;
             privchange_q <= '0;
             // context_change_q <= '0;
             //precise_context_report_q <= '0; // requires ctype signal CPU side
@@ -984,8 +957,6 @@ module rv_tracer #(
             epc0_q <= epc0_d;
             epc1_q <= epc1_d;
             epc2_q <= epc2_d;
-            time0_q <= time0_d;
-            time1_q <= time1_d;
             privchange_q <= privchange_d;
             // context_change_q <= context_change_d;
             //precise_context_report_q <= precise_context_report_d; // requires ctype signal CPU side

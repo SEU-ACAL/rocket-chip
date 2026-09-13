@@ -43,19 +43,10 @@ module te_packet_emitter
 
     // nc (next cycle) signals
 
-    /*  the following signals used to determine 
-        if the packet emitter has to put context 
-        and/or time in the payload*/
-    input logic                                 nocontext_i,  // both read from registers
-    input logic                                 notime_i,
-    // in this implementation both hardwired to 0
-
     // format 3 subformat 0 specific signals
     input logic                                 tc_branch_i,
     input logic                                 tc_branch_taken_i,
     input logic [te_pkg::PRIV_LEN-1:0]          tc_priv_i,
-    input logic [te_pkg::TIME_LEN-1:0]          tc_time_i,    // optional
-    //input logic [:0]                            context_i, // optional
     input logic [te_pkg::XLEN-1:0]              tc_address_i,
 
     // format 3 subformat 1 specific signals
@@ -126,10 +117,11 @@ module te_packet_emitter
     logic                                       branch;
     logic [te_pkg::XLEN-1:0]                    address;
     logic [te_pkg::XLEN-1:0]                    ecause;
-    logic signed [te_pkg::XLEN:0]               diff_addr;
+    // Keep architectural addresses at XLEN, but calculate only the signed
+    // Sv39 delta consumed by the address-compression path.
+    logic signed [te_pkg::ADDR_COMPRESS_WIDTH-1:0] diff_addr;
     logic [te_pkg::XLEN-1:0]                    latest_addr_d, latest_addr_q; // address of the latest packet emitted
     logic [te_pkg::XLEN-1:0]                    tval;
-    logic [1:0]                                 time_and_context; // if payload requires time/context
     logic                                       notify;
     logic                                       updiscon;
     logic                                       irreport;
@@ -148,7 +140,6 @@ module te_packet_emitter
     assign ecause = lc_tc_mux_i ? tc_cause_i : lc_cause_i;
     assign tval = lc_tc_mux_i ? tc_tval_i : lc_tval_i;
     assign interrupt = lc_tc_mux_i ? tc_interrupt_i : lc_interrupt_i;
-    assign time_and_context = {~notime_i, ~nocontext_i};
     assign branch_map_flush_o = flush_q;
     assign payload_length_o = (used_bits + 7) >> 3;
     assign latest_branch_addr_d = tc_address_i;
@@ -262,8 +253,7 @@ module te_packet_emitter
                     packet_type_o = te_pkg::F3SF0;
                     update_latest_addr = '1;
 
-                    case(time_and_context)
-                    2'b00: begin
+                    begin
                         used_bits += 1 + (address_off * 8)+1 + te_pkg::PRIV_LEN;
 
                         packet_payload_o[4+:1+te_pkg::PRIV_LEN] = {
@@ -315,68 +305,13 @@ module te_packet_emitter
                         endcase
                     end
 
-                    2'b10: begin
-                        used_bits += 1 + te_pkg::PRIV_LEN + te_pkg::TIME_LEN + (address_off * 8)+1;
-
-                        packet_payload_o[4+:1+te_pkg::PRIV_LEN+te_pkg::TIME_LEN] = {
-                            tc_time_i,
-                            tc_priv_i,
-                            branch
-                        };
-                        // address compression
-                        case (address_off)
-                        1: begin
-                            packet_payload_o[5+te_pkg::PRIV_LEN+te_pkg::XLEN+:9] = {
-                                addr_to_compress_o[8:0]
-                            };
-                        end 
-                        2: begin
-                            packet_payload_o[5+te_pkg::PRIV_LEN+te_pkg::XLEN+:17] = {
-                                addr_to_compress_o[16:0]
-                            };
-                        end
-                        3: begin
-                            packet_payload_o[5+te_pkg::PRIV_LEN+te_pkg::XLEN+:25] = {
-                                addr_to_compress_o[24:0]
-                            };
-                        end
-                        4: begin
-                            packet_payload_o[5+te_pkg::PRIV_LEN+te_pkg::XLEN+:33] = {
-                                addr_to_compress_o[32:0]
-                            };
-                        end
-                        5: begin
-                            packet_payload_o[5+te_pkg::PRIV_LEN+te_pkg::XLEN+:41] = {
-                                addr_to_compress_o[40:0]
-                            };
-                        end 
-                        6: begin
-                            packet_payload_o[5+te_pkg::PRIV_LEN+te_pkg::XLEN+:49] = {
-                                addr_to_compress_o[48:0]
-                            };
-                        end
-                        7: begin
-                            packet_payload_o[5+te_pkg::PRIV_LEN+te_pkg::XLEN+:57] = {
-                                addr_to_compress_o[56:0]
-                            };
-                        end
-                        8: begin
-                            packet_payload_o[5+te_pkg::PRIV_LEN+te_pkg::XLEN+:65] = {
-                                addr_to_compress_o
-                            };
-                        end
-                        endcase
-                    end
-                    /*TODO: other cases*/
-                    endcase
                 end
                 te_pkg::SF_TRAP: begin // subformat 1
                     // updating packet type
                     packet_type_o = te_pkg::F3SF1;
                     update_latest_addr = '1;
                     
-                    case(time_and_context)
-                    2'b00: begin
+                    begin
                         used_bits += 1 + te_pkg::PRIV_LEN + te_pkg::XLEN + 2 + address_off * 8 + 1 + te_pkg::XLEN;
 
                         packet_payload_o[4+:1+te_pkg::PRIV_LEN+te_pkg::XLEN+2] = {
@@ -439,89 +374,12 @@ module te_packet_emitter
                         endcase
                     end
 
-`ifdef TE_DISABLE_OVERSIZE_TRAP
-                    // The RV64 normal-encapsulation payload is 248 bits.
-                    // A trap carrying time, tval and a full/compressed
-                    // address can exceed that limit, so this unsupported
-                    // profile is suppressed explicitly.
-                    2'b10: begin
-                        packet_valid_o = '0;
-                        used_bits = '0;
-                    end
-`else
-                    2'b10: begin
-                        used_bits += 1 + te_pkg::PRIV_LEN + te_pkg::XLEN + 2 + address_off * 8 + 1 + te_pkg::TIME_LEN * 2;
-
-                        packet_payload_o[4+:1+te_pkg::PRIV_LEN+te_pkg::XLEN+2+te_pkg::TIME_LEN] = {
-                            thaddr_i,
-                            interrupt,
-                            ecause,
-                            tc_time_i,
-                            tc_priv_i,
-                            branch
-                        };
-                        // address compression
-                        case (address_off)
-                        1: begin
-                            packet_payload_o[7+te_pkg::PRIV_LEN+te_pkg::XLEN+te_pkg::XLEN+:9+te_pkg::XLEN] = {
-                                tval,
-                                addr_to_compress_o[8:0]
-                            };
-                        end
-                        2: begin
-                            packet_payload_o[7+te_pkg::PRIV_LEN+te_pkg::XLEN+te_pkg::XLEN+:17+te_pkg::XLEN] = {
-                                tval,
-                                addr_to_compress_o[16:0]
-                            };
-                        end
-                        3: begin
-                            packet_payload_o[7+te_pkg::PRIV_LEN+te_pkg::XLEN+te_pkg::XLEN+:25+te_pkg::XLEN] = {
-                                tval,
-                                addr_to_compress_o[24:0]
-                            };
-                        end
-                        4: begin
-                            packet_payload_o[7+te_pkg::PRIV_LEN+te_pkg::XLEN+te_pkg::XLEN+:33+te_pkg::XLEN] = {
-                                tval,
-                                addr_to_compress_o[32:0]
-                            };
-                        end
-                        5: begin
-                            packet_payload_o[7+te_pkg::PRIV_LEN+te_pkg::XLEN+te_pkg::XLEN+:41+te_pkg::XLEN] = {
-                                tval,
-                                addr_to_compress_o[40:0]
-                            };
-                        end
-                        6: begin
-                            packet_payload_o[7+te_pkg::PRIV_LEN+te_pkg::XLEN+te_pkg::XLEN+:49+te_pkg::XLEN] = {
-                                tval,
-                                addr_to_compress_o[48:0]
-                            };
-                        end
-                        7: begin
-                            packet_payload_o[7+te_pkg::PRIV_LEN+te_pkg::XLEN+te_pkg::XLEN+:57+te_pkg::XLEN] = {
-                                tval,
-                                addr_to_compress_o[56:0]
-                            };
-                        end
-                        8: begin
-                            packet_payload_o[7+te_pkg::PRIV_LEN+te_pkg::XLEN+te_pkg::XLEN+:65+te_pkg::XLEN] = {
-                                tval,
-                                addr_to_compress_o
-                            };
-                        end
-                        endcase
-                    end
-`endif
-                    /*TODO: other cases*/
-                    endcase
                 end
                 te_pkg::SF_CONTEXT: begin // subformat 2
                     // updating packet type
                     packet_type_o = te_pkg::F3SF2;
 
-                    case(time_and_context)
-                    2'b00: begin
+                    begin
                         used_bits += te_pkg::PRIV_LEN;
 
                         packet_payload_o[4+:te_pkg::PRIV_LEN] = {
@@ -529,16 +387,6 @@ module te_packet_emitter
                         };
                     end
 
-                    2'b10: begin
-                        used_bits += te_pkg::PRIV_LEN + te_pkg::TIME_LEN;
-
-                        packet_payload_o[4+:te_pkg::PRIV_LEN+te_pkg::TIME_LEN] = {
-                            tc_time_i,
-                            tc_priv_i
-                        };
-                    end
-                    /*TODO: other cases*/
-                    endcase
                 end
                 te_pkg::SF_SUPPORT: begin // subformat 3
                     // updating packet type
@@ -1045,8 +893,10 @@ module te_packet_emitter
         if (packet_valid_o && (packet_format_i == te_pkg::F_DIFF_DELTA || 
             packet_format_i == te_pkg::F_ADDR_ONLY)) begin
             if (ioptions_i.delta_address_en) begin
-                diff_addr = signed'(tc_address_i) - latest_addr_q;
-                addr_to_compress_o = diff_addr;
+                diff_addr = $signed(tc_address_i[te_pkg::ADDR_COMPRESS_WIDTH-1:0]) -
+                            $signed(latest_addr_q[te_pkg::ADDR_COMPRESS_WIDTH-1:0]);
+                addr_to_compress_o = {{(te_pkg::XLEN + 1 - te_pkg::ADDR_COMPRESS_WIDTH)
+                                       {diff_addr[te_pkg::ADDR_COMPRESS_WIDTH-1]}}, diff_addr};
             end else if (ioptions_i.full_address_en) begin
                 addr_to_compress_o = tc_address_i;
             end
@@ -1062,7 +912,8 @@ module te_packet_emitter
                 // the computed difference; otherwise diff_addr is zero and
                 // corrupts every F1/F2 address.
                 if (ioptions_i.delta_address_en) begin
-                    addr_to_compress_o = diff_addr;
+                    addr_to_compress_o = {{(te_pkg::XLEN + 1 - te_pkg::ADDR_COMPRESS_WIDTH)
+                                           {diff_addr[te_pkg::ADDR_COMPRESS_WIDTH-1]}}, diff_addr};
                 end
             end
             if (packet_type_o == te_pkg::F3SF0) begin // F3SF0

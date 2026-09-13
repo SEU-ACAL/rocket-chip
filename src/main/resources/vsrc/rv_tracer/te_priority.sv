@@ -22,7 +22,13 @@ for example "packet identifier" or something similar
 it orders packet generation - refer to page 53 of the spec
 */
 
-module te_priority (
+module te_priority #(
+    // RV64 Rocket uses Sv39 virtual PCs.  A canonical address needs 39
+    // meaningful bits, while a delta between the low and high canonical
+    // regions needs one additional signed bit.  Keep the RV64 packet fields
+    // unchanged; this parameter limits only the address-compression tree.
+    parameter int unsigned ADDR_COMPRESS_WIDTH = te_pkg::ADDR_COMPRESS_WIDTH
+) (
 
     input logic                             clk_i,
     input logic                             rst_ni,
@@ -127,10 +133,11 @@ module te_priority (
     logic   nc_ppccd_br;
 
     // signals for compression
-    // lzc(WIDTH=XLEN+1) must represent counts 0..XLEN, requiring
-    // clog2(XLEN+1) bits (7 bits for the RV64/65-bit input).
-    logic [$clog2(te_pkg::XLEN+1)-1:0]  addr_zeros, addr_ones;
-    logic [$clog2(te_pkg::XLEN+1)-1:0]  sign_extendable;
+    // The 65-bit addr_to_compress bus is retained for the RV64 packet
+    // interface.  Only its sign-extended Sv39 subset reaches the LZC.  A
+    // 40-bit signed value covers every canonical Sv39 address delta.
+    logic [$clog2(ADDR_COMPRESS_WIDTH)-1:0]  addr_zeros, addr_ones;
+    logic [$clog2(ADDR_COMPRESS_WIDTH)-1:0]  sign_extendable;
     logic                               empty_zeros;
     logic                               empty_ones;
 
@@ -395,24 +402,24 @@ module te_priority (
     assign sign_extendable = addr_zeros > addr_ones ? addr_zeros : addr_ones;
     // outputting the least sign bits we want to keep
     // empty signals are used to cover 32'b0 and 32'b1 corner cases
-    assign keep_bits_o = (empty_zeros || empty_ones) ? 1 : te_pkg::XLEN+1 - sign_extendable + 1;
+    assign keep_bits_o = (empty_zeros || empty_ones) ? 1 : ADDR_COMPRESS_WIDTH - sign_extendable + 1;
 
     // leading zero counters
     // from common_cells
     lzc #(
-        .WIDTH(te_pkg::XLEN+1),
+        .WIDTH(ADDR_COMPRESS_WIDTH),
         .MODE(1)
     )i_lzc_zeros(
-        .in_i   (addr_to_compress_i),
+        .in_i   (addr_to_compress_i[ADDR_COMPRESS_WIDTH-1:0]),
         .cnt_o  (addr_zeros),
         .empty_o(empty_zeros)
     );
 
     lzc #(
-        .WIDTH(te_pkg::XLEN+1),
+        .WIDTH(ADDR_COMPRESS_WIDTH),
         .MODE(1)
     )i_lzc_ones(
-        .in_i   (~addr_to_compress_i),
+        .in_i   (~addr_to_compress_i[ADDR_COMPRESS_WIDTH-1:0]),
         .cnt_o  (addr_ones),
         .empty_o(empty_ones)
     );

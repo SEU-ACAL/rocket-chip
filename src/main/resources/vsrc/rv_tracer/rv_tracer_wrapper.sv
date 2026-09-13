@@ -33,7 +33,6 @@ module rv_tracer_wrapper #(
   input logic [N-1:0][63:0] iaddr_i,
   input logic [N-1:0][31:0] iretire_i,
   input logic [N-1:0] ilastsize_i,
-  input logic [63:0] time_i,
   input logic encapsulator_ready_i,
   input logic external_enable_i,
   output logic [N-1:0] packet_valid_o,
@@ -90,7 +89,7 @@ module rv_tracer_wrapper #(
   rv_tracer #(.N(N), .ONLY_BRANCHES(0)) i_rv_tracer (
     .clk_i(clk_i), .rst_ni(rst_ni), .valid_i(valid_i), .itype_i(itype_i),
     .cause_i(cause_i), .tval_i(tval_i), .priv_i(priv_i), .iaddr_i(iaddr_i),
-    .iretire_i(iretire_i), .ilastsize_i(ilastsize_i), .time_i(time_i),
+    .iretire_i(iretire_i), .ilastsize_i(ilastsize_i),
     .tvec_i(tvec_i), .epc_i(epc_i), .encapsulator_ready_i(encapsulator_ready_i),
     .external_enable_i(external_enable_i),
     .paddr_i(paddr), .pwrite_i(pwrite), .psel_i(psel), .penable_i(penable),
@@ -164,7 +163,6 @@ module PulpRvTracerBlackBox #(
   input logic [63:0] iaddr_i_0,
   input logic [31:0] iretire_i_0,
   input logic [N-1:0] ilastsize_i,
-  input logic [63:0] time_i,
   input logic encapsulator_ready_i,
   input logic external_enable_i,
   output logic [N-1:0] packet_valid_o,
@@ -189,7 +187,7 @@ module PulpRvTracerBlackBox #(
   rv_tracer_wrapper #(.N(N)) impl (
     .clk_i, .rst_ni, .enable_i, .config_valid_i, .config_addr_i, .config_data_i,
     .config_ready_o, .valid_i, .itype_i(itype_vec), .cause_i, .tval_i, .tvec_i, .epc_i,
-    .priv_i, .iaddr_i(iaddr_vec), .iretire_i(iretire_vec), .ilastsize_i, .time_i,
+    .priv_i, .iaddr_i(iaddr_vec), .iretire_i(iretire_vec), .ilastsize_i,
     .encapsulator_ready_i, .external_enable_i, .packet_valid_o, .packet_type_o(packet_type_vec),
     .packet_length_o(packet_length_vec), .packet_payload_o(packet_payload_vec), .stall_o
   );
