@@ -56,6 +56,9 @@ class RoCCCoreIO(val nRoCCCSRs: Int = 0)(implicit p: Parameters) extends CoreBun
 
 class RoCCIO(val nPTWPorts: Int, nRoCCCSRs: Int)(implicit p: Parameters) extends RoCCCoreIO(nRoCCCSRs)(p) {
   val ptw = Vec(nPTWPorts, new TLBPTWIO)
+  // Pulsed when the core executes sfence.vma (same source as PTW dpath.sfence).
+  // Lives on RoCCIO (not RoCCCoreIO) so RocketCore does not need to drive it.
+  val sfence = Input(Bool())
   val fpu_req = Decoupled(new FPInput)
   val fpu_resp = Flipped(Decoupled(new FPResult))
 }
@@ -102,6 +105,7 @@ trait HasLazyRoCCModule extends CanHavePTWModule
     val cmdRouter = Module(new RoccCommandRouter(outer.roccs.map(_.opcodes))(outer.p))
     outer.roccs.zipWithIndex.foreach { case (rocc, i) =>
       rocc.module.io.ptw ++=: ptwPorts
+      rocc.module.io.sfence := ptw.io.dpath.sfence.valid
       rocc.module.io.cmd <> cmdRouter.io.out(i)
       val dcIF = Module(new SimpleHellaCacheIF()(outer.p))
       dcIF.io.requestor <> rocc.module.io.mem
