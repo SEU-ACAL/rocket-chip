@@ -6,7 +6,6 @@ package freechips.rocketchip.rocket
 import chisel3._
 import chisel3.util.{BitPat, Cat, Fill, Mux1H, PopCount, PriorityMux, RegEnable, UIntToOH, Valid, log2Ceil, log2Up}
 import org.chipsalliance.cde.config.Parameters
-import freechips.rocketchip.devices.debug.DebugModuleKey
 import freechips.rocketchip.tile._
 import freechips.rocketchip.util._
 import freechips.rocketchip.util.property
@@ -483,7 +482,7 @@ class CSRFile(
   val reg_debug = RegInit(false.B)
   val reg_dpc = Reg(UInt(vaddrBitsExtended.W))
   val reg_dscratch0 = Reg(UInt(xLen.W))
-  val reg_dscratch1 = (p(DebugModuleKey).map(_.nDscratch).getOrElse(1) > 1).option(Reg(UInt(xLen.W)))
+  val reg_dscratch1: Option[UInt] = None
   val reg_singleStepped = Reg(Bool())
 
   val reg_mcontext = (coreParams.mcontextWidth > 0).option(RegInit(0.U(coreParams.mcontextWidth.W)))
@@ -965,8 +964,8 @@ class CSRFile(
   val causeIsDebugTrigger = !cause(xLen-1) && cause_lsbs === CSR.debugTriggerCause.U
   val causeIsDebugBreak = !cause(xLen-1) && insn_break && Cat(reg_dcsr.ebreakm, reg_dcsr.ebreakh, reg_dcsr.ebreaks, reg_dcsr.ebreaku)(reg_mstatus.prv)
   val trapToDebug = usingDebug.B && (reg_singleStepped || causeIsDebugInt || causeIsDebugTrigger || causeIsDebugBreak || reg_debug)
-  val debugEntry = p(DebugModuleKey).map(_.debugEntry).getOrElse(BigInt(0x800))
-  val debugException = p(DebugModuleKey).map(_.debugException).getOrElse(BigInt(0x808))
+  val debugEntry = BigInt(0x800)
+  val debugException = BigInt(0x808)
   val debugTVec = Mux(reg_debug, Mux(insn_break, debugEntry.U, debugException.U), debugEntry.U)
   val delegate = usingSupervisor.B && reg_mstatus.prv <= PRV.S.U && Mux(cause(xLen-1), read_mideleg(cause_deleg_lsbs), read_medeleg(cause_deleg_lsbs))
   val delegateVS = reg_mstatus.v && delegate && Mux(cause(xLen-1), read_hideleg(cause_deleg_lsbs), read_hedeleg(cause_deleg_lsbs))

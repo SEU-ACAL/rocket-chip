@@ -3,9 +3,7 @@ package freechips.rocketchip.rocket
 import chisel3._
 import chisel3.util._
 import org.chipsalliance.cde.config._
-import org.chipsalliance.diplomacy.lazymodule._
 import freechips.rocketchip.tile._
-import freechips.rocketchip.tilelink._
 
 case class RocketCoreVectorParams(
   build: Parameters => RocketVectorUnit,
@@ -70,22 +68,7 @@ class VectorCoreIO(implicit p: Parameters) extends CoreBundle()(p) {
   val backend_busy = Output(Bool())
 }
 
-abstract class RocketVectorUnit(implicit p: Parameters) extends LazyModule {
-  val module: RocketVectorUnitModuleImp
-  val tlNode: TLNode = TLIdentityNode()
-  val atlNode: TLNode = TLIdentityNode()
-}
-
-class RocketVectorUnitModuleImp(outer: RocketVectorUnit) extends LazyModuleImp(outer) {
-  val io = IO(new Bundle {
-    val core = new VectorCoreIO
-    val tlb = Flipped(new DCacheTLBPort)
-    val dmem = new HellaCacheIO
-
-    val fp_req = Decoupled(new FPInput())
-    val fp_resp = Flipped(Decoupled(new FPResult()))
-  })
-}
+abstract class RocketVectorUnit(implicit p: Parameters) extends CoreModule()(p)
 
 abstract class RocketVectorDecoder(implicit p: Parameters) extends CoreModule()(p) {
   val io = IO(new Bundle {
