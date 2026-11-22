@@ -86,16 +86,73 @@ module rv_tracer_wrapper #(
     end
   end
 
+  // stall_o reaches Rocket's decode stage. Instructions already in E/M/W and
+  // the two registered trace-ingress stages still arrive after it asserts.
+  // rv_tracer freezes its input registers immediately when its encapsulator
+  // stalls, so retain these complete events until it can sample them again.
+  // The flow-through path preserves the original timing when there is no stall.
+  localparam int EVENT_DEPTH = 16;
+  localparam int EVENT_RESERVE = 8;
+  typedef struct packed {
+    logic [N-1:0] valid;
+    logic [N-1:0][3:0] itype;
+    logic [63:0] cause, tval, tvec, epc;
+    logic [1:0] priv;
+    logic [N-1:0][63:0] iaddr;
+    logic [N-1:0][31:0] iretire;
+    logic [N-1:0] ilastsize;
+  } trace_event_t;
+  trace_event_t incoming_event, encoder_event;
+  trace_event_t event_fifo [EVENT_DEPTH];
+  logic [$clog2(EVENT_DEPTH)-1:0] event_read, event_write;
+  logic [$clog2(EVENT_DEPTH):0] event_count;
+  logic encoder_stall, event_push, event_pop;
+  assign incoming_event = {valid_i, itype_i, cause_i, tval_i, tvec_i,
+                           epc_i, priv_i, iaddr_i, iretire_i, ilastsize_i};
+  assign encoder_event = (event_count != 0) ? event_fifo[event_read] : incoming_event;
+  assign event_push = enable_i && (|valid_i) && ((event_count != 0) || encoder_stall);
+  assign event_pop = enable_i && (event_count != 0) && !encoder_stall;
+  assign stall_o = enable_i && (encoder_stall || (event_count >= EVENT_DEPTH - EVENT_RESERVE));
+  always_ff @(posedge clk_i or negedge rst_ni) begin
+    if (!rst_ni) begin
+      event_read <= '0;
+      event_write <= '0;
+      event_count <= '0;
+    end else if (!enable_i) begin
+      event_read <= '0;
+      event_write <= '0;
+      event_count <= '0;
+    end else begin
+      if (event_push) begin
+        event_fifo[event_write] <= incoming_event;
+        event_write <= event_write + 1'b1;
+      end
+      if (event_pop) event_read <= event_read + 1'b1;
+      case ({event_push, event_pop})
+        2'b10: event_count <= event_count + 1'b1;
+        2'b01: event_count <= event_count - 1'b1;
+        default: ;
+      endcase
+    end
+  end
+`ifndef SYNTHESIS
+  always_ff @(posedge clk_i) begin
+    if (rst_ni && enable_i && event_push)
+      assert ((event_count < EVENT_DEPTH) || event_pop)
+        else $fatal(1, "PULP trace input event FIFO overflow");
+  end
+`endif
+
   rv_tracer #(.N(N), .ONLY_BRANCHES(0)) i_rv_tracer (
-    .clk_i(clk_i), .rst_ni(rst_ni), .valid_i(valid_i), .itype_i(itype_i),
-    .cause_i(cause_i), .tval_i(tval_i), .priv_i(priv_i), .iaddr_i(iaddr_i),
-    .iretire_i(iretire_i), .ilastsize_i(ilastsize_i),
-    .tvec_i(tvec_i), .epc_i(epc_i), .encapsulator_ready_i(encapsulator_ready_i),
+    .clk_i(clk_i), .rst_ni(rst_ni), .valid_i(encoder_event.valid), .itype_i(encoder_event.itype),
+    .cause_i(encoder_event.cause), .tval_i(encoder_event.tval), .priv_i(encoder_event.priv), .iaddr_i(encoder_event.iaddr),
+    .iretire_i(encoder_event.iretire), .ilastsize_i(encoder_event.ilastsize),
+    .tvec_i(encoder_event.tvec), .epc_i(encoder_event.epc), .encapsulator_ready_i(encapsulator_ready_i),
     .external_enable_i(external_enable_i),
     .paddr_i(paddr), .pwrite_i(pwrite), .psel_i(psel), .penable_i(penable),
     .pwdata_i(pwdata), .packet_valid_o(packet_valid_o),
     .packet_type_o(packet_type_o), .packet_length_o(packet_length_o),
-    .packet_payload_o(packet_payload_o), .stall_o(stall_o),
+    .packet_payload_o(packet_payload_o), .stall_o(encoder_stall),
     .pready_o(pready), .prdata_o(prdata)
   );
 
